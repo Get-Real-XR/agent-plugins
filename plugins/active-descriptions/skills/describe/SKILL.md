@@ -6,6 +6,12 @@ description: >
   flagged by the staleness hooks. Analyzes the diff and conversation
   history, then applies the description via jj describe.
 user-invocable: true
+allowed-tools:
+  - Bash: jj diff*
+  - Bash: jj log*
+  - Bash: jj describe*
+  - Bash: jj status*
+  - Bash: jj show*
 ---
 
 # Active Change Description Workflow

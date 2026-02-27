@@ -1,11 +1,11 @@
 ---
 name: zellij-rename
-aliases:
-  - zr
 description: >
   Rename the current zellij pane, tab, or session with a contextually
   derived label. Usage: /zellij-rename {pane|tab|session}
-user_invocable: true
+user-invocable: true
+allowed-tools:
+  - Bash: zellij action rename-*
 ---
 
 # Zellij Rename
