@@ -1,0 +1,172 @@
+name: Check jj-lib updates
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Monday 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/active-descriptions
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect latest jj release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(gh api repos/jj-vcs/jj/releases/latest --jq '.tag_name')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # tag is e.g. "v0.39.0" — strip leading v and trailing .0 for semver
+          semver=${tag#v}
+          semver=${semver%.0}
+          echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          echo "Latest jj release: $tag (semver: $semver)"
+
+      - name: Read pinned version
+        id: pinned
+        run: |
+          tag=$(sed -n 's/^jj-lib.*tag = "\(v[0-9.]*\)".*/\1/p' Cargo.toml)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Pinned jj-lib tag: $tag"
+
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ steps.latest.outputs.tag }}" = "${{ steps.pinned.outputs.tag }}" ]; then
+            echo "Already on latest (${{ steps.pinned.outputs.tag }}), nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Update available: ${{ steps.pinned.outputs.tag }} -> ${{ steps.latest.outputs.tag }}"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing PR
+        if: steps.compare.outputs.skip == 'false'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="deps/jj-lib-${{ steps.latest.outputs.tag }}"
+          count=$(gh pr list --head "$branch" --state open --json number --jq 'length')
+          if [ "$count" -gt 0 ]; then
+            echo "PR already exists for $branch, skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump versions in Cargo.toml
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        env:
+          NEW_TAG: ${{ steps.latest.outputs.tag }}
+          NEW_SEMVER: ${{ steps.latest.outputs.semver }}
+          OLD_TAG: ${{ steps.pinned.outputs.tag }}
+        run: |
+          old_semver=${OLD_TAG#v}
+          old_semver=${old_semver%.0}
+          sed -i "s/jj-lib = { version = \"${old_semver}\"/jj-lib = { version = \"${NEW_SEMVER}\"/" Cargo.toml
+          sed -i "s/tag = \"${OLD_TAG}\"/tag = \"${NEW_TAG}\"/g" Cargo.toml
+          echo "--- Updated Cargo.toml ---"
+          cat Cargo.toml
+
+      - name: Install Rust toolchain
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry & build
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            plugins/active-descriptions/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('plugins/active-descriptions/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Update lockfile
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        run: cargo update -p jj-lib
+
+      - name: Run tests
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        id: tests
+        continue-on-error: true
+        run: |
+          if cargo test 2>&1 | tee /tmp/test-output.txt; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run clippy
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        id: clippy
+        continue-on-error: true
+        run: |
+          if cargo clippy --all-targets --all-features 2>&1 | tee /tmp/clippy-output.txt; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create branch and open PR
+        if: steps.compare.outputs.skip == 'false' && steps.existing.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.latest.outputs.tag }}
+          OLD_TAG: ${{ steps.pinned.outputs.tag }}
+        run: |
+          branch="deps/jj-lib-${NEW_TAG}"
+          git checkout -b "$branch"
+          git add Cargo.toml Cargo.lock
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "deps(active-descriptions): bump jj-lib ${OLD_TAG} -> ${NEW_TAG}"
+          git push -u origin "$branch"
+
+          test_result="${{ steps.tests.outputs.result }}"
+          clippy_result="${{ steps.clippy.outputs.result }}"
+
+          if [ "$test_result" = "pass" ] && [ "$clippy_result" = "pass" ]; then
+            status="Clean upgrade — ready to merge."
+            label=""
+          else
+            status="Upgrade needs manual fixes."
+            label="--label needs-manual-fix"
+          fi
+
+          body="## jj-lib ${OLD_TAG} → ${NEW_TAG}"
+          body="${body}\n\n${status}"
+          body="${body}\n\n| Check | Result |"
+          body="${body}\n|-------|--------|"
+          body="${body}\n| \`cargo test\` | ${test_result} |"
+          body="${body}\n| \`cargo clippy\` | ${clippy_result} |"
+
+          if [ "$test_result" = "fail" ]; then
+            output=$(tail -80 /tmp/test-output.txt)
+            body="${body}\n\n<details><summary>Test output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>"
+          fi
+
+          if [ "$clippy_result" = "fail" ]; then
+            output=$(tail -80 /tmp/clippy-output.txt)
+            body="${body}\n\n<details><summary>Clippy output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>"
+          fi
+
+          # shellcheck disable=SC2086
+          echo -e "$body" | gh pr create \
+            --title "deps(active-descriptions): bump jj-lib to ${NEW_TAG}" \
+            --body-file - \
+            --base main \
+            $label
