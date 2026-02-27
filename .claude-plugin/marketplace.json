@@ -21,6 +21,11 @@
       "name": "jj-tutor",
       "source": "./plugins/jj-tutor",
       "description": "Adaptive jj VCS co-pilot that teaches Jujutsu progressively based on the user's experience level. No dependencies."
+    },
+    {
+      "name": "zellij-utils",
+      "source": "./plugins/zellij-utils",
+      "description": "Zellij terminal multiplexer utilities. Includes /zellij-rename (/zr) for contextual pane/tab/session naming. Requires zellij."
     }
   ]
 }
