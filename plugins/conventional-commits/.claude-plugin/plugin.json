@@ -1,0 +1,6 @@
+{
+  "name": "conventional-commits",
+  "version": "0.1.0",
+  "description": "Conventional Commits v1.0.0 specification as agent context for writing commit messages",
+  "author": { "name": "henry-merrilees" }
+}

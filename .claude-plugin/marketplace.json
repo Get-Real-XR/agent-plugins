@@ -1,0 +1,26 @@
+{
+  "name": "agent-plugins",
+  "owner": { "name": "henry-merrilees" },
+  "plugins": [
+    {
+      "name": "active-descriptions",
+      "source": "./plugins/active-descriptions",
+      "description": "Collaborative jj change description workflow with staleness enforcement hooks and conventional commits. Requires Rust toolchain."
+    },
+    {
+      "name": "conventional-commits",
+      "source": "./plugins/conventional-commits",
+      "description": "Conventional Commits v1.0.0 specification as agent context for writing commit messages. No dependencies."
+    },
+    {
+      "name": "jj-worktree-compat",
+      "source": "./plugins/jj-worktree-compat",
+      "description": "jj workspace isolation hooks for Claude Code worktrees. Requires jj."
+    },
+    {
+      "name": "jj-tutor",
+      "source": "./plugins/jj-tutor",
+      "description": "Adaptive jj VCS co-pilot that teaches Jujutsu progressively based on the user's experience level. No dependencies."
+    }
+  ]
+}

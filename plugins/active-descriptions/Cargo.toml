@@ -1,0 +1,44 @@
+[package]
+name = "jj-stale-descriptions"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Staleness detection hooks for jj change descriptions in Claude Code"
+publish = false
+
+[[bin]]
+name = "jj-stale-descriptions"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+futures = "0.3.32"
+jj-lib = { version = "0.38", features = ["git"] }
+pollster = "0.4.0"
+serde_json = "1"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
+
+[dev-dependencies]
+testutils = { git = "https://github.com/jj-vcs/jj", tag = "v0.38.0" }
+# testutils transitively needs tokio with rt features; activate them here.
+tokio = { version = "1.49.0", features = ["rt", "rt-multi-thread"] }
+
+[patch.crates-io]
+jj-lib = { git = "https://github.com/jj-vcs/jj", tag = "v0.38.0" }
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[lints.rust]
+unsafe_code = "deny"

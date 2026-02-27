@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v jj >/dev/null 2>&1 || { echo 'active-descriptions: jj (Jujutsu) is required but not found. Install: https://jj-vcs.github.io/jj/latest/install-and-setup/' >&2; exit 1; } && command -v cargo >/dev/null 2>&1 || { echo 'active-descriptions: cargo (Rust toolchain) is required but not found. Install: https://rustup.rs/' >&2; exit 1; }",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rm -f \"${TMPDIR:-/tmp}/claude-stale-desc-retries-${CLAUDE_SESSION_ID}\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo build -r --manifest-path ${CLAUDE_PLUGIN_ROOT}/Cargo.toml 2>/dev/null",
+            "timeout": 300,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rm -f \"${TMPDIR:-/tmp}/claude-stale-desc-retries-${CLAUDE_SESSION_ID}\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/require-jj.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo run -r --manifest-path ${CLAUDE_PLUGIN_ROOT}/Cargo.toml -- --stop",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

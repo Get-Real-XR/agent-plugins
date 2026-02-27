@@ -1,0 +1,6 @@
+{
+  "name": "jj-tutor",
+  "version": "0.1.0",
+  "description": "Adaptive jj VCS co-pilot that teaches Jujutsu progressively based on the user's experience level",
+  "author": { "name": "henry-merrilees" }
+}

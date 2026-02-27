@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v jj >/dev/null 2>&1 || { echo 'jj-tools: jj (Jujutsu) is required but not found. Install: https://jj-vcs.github.io/jj/latest/install-and-setup/' >&2; exit 1; }",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
