@@ -1,0 +1,6 @@
+{
+  "name": "zellij-utils",
+  "version": "0.1.0",
+  "description": "Zellij terminal multiplexer utilities for Claude Code",
+  "author": { "name": "henry-merrilees" }
+}
