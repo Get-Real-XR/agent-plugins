@@ -10,10 +10,11 @@ set -euo pipefail
 
 settings_file="$HOME/.claude/settings.json"
 
-: "${CLAUDE_PLUGIN_ROOT:?install-worktree-hooks: CLAUDE_PLUGIN_ROOT not set}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$script_dir/.." && pwd)}"
 
-create_cmd="$CLAUDE_PLUGIN_ROOT/hooks/jj-worktree-create.sh"
-remove_cmd="$CLAUDE_PLUGIN_ROOT/hooks/jj-worktree-remove.sh"
+create_cmd="$plugin_root/hooks/jj-worktree-create.sh"
+remove_cmd="$plugin_root/hooks/jj-worktree-remove.sh"
 
 # --- Check if already up to date --------------------------------------------
 
