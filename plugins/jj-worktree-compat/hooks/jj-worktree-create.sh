@@ -2,61 +2,73 @@
 set -euo pipefail
 
 # WorktreeCreate hook for jj workspaces.
-# Input: JSON on stdin with { name, cwd, ... }
-# Output: absolute path to created workspace directory on stdout
+# Input:  JSON on stdin with { name, cwd, ... }
+# Output: absolute path to the created workspace directory on stdout.
+#
+# Claude Code uses the path printed on stdout as the worktree-isolated agent's
+# working directory. If this hook exits non-zero or prints no path, Claude Code
+# falls back to the *caller's* cwd — so the agent silently lands in the shared
+# checkout instead of an isolated worktree. Correctness therefore hinges on two
+# rules: (1) print the path ONLY once the workspace genuinely exists, and
+# (2) recover from transient failures instead of giving up.
 
 input=$(cat)
 name=$(echo "$input" | jq -r '.name')
 cwd=$(echo "$input" | jq -r '.cwd')
 
-# Find the jj repo root from the session's cwd
+# Resolve the jj workspace root from the caller's cwd. (If the caller is already
+# inside a workspace, this resolves to that workspace; jj workspaces all share a
+# single repo store, so `jj workspace add` still registers against the one repo.)
 repo_root=$(cd "$cwd" && jj root)
 
-# Place workspaces under <repo>/.claude/worktrees/{name}, matching Claude Code's
-# default git worktree convention and naturally namespacing per-repo.
+# Place workspaces under <root>/.claude/worktrees/<name> — the location Claude
+# Code expects for managed worktrees ("created under .claude/worktrees/ of this
+# repository").
 worktree_base="$repo_root/.claude/worktrees"
 dest="$worktree_base/$name"
-
 mkdir -p "$worktree_base"
 
-# Serialize workspace creation across concurrent hook invocations.
-# `jj workspace add` takes an internal repo lock, but concurrent callers
-# can fail rather than queue — and a failed hook causes Claude Code to
-# fall back to the caller's cwd, landing multiple agents in the same
-# directory. An exclusive flock on the worktree base directory ensures
-# only one hook mutates jj state at a time.
-exec 9<"$worktree_base"
-flock -x 9
+# Create the workspace, retrying transient failures. We deliberately do NOT take
+# a global lock. Serializing every create makes cumulative working-copy checkout
+# time grow with the number of concurrently spawned agents; in a large repo the
+# later hooks can exceed Claude Code's hook timeout, get killed, and trigger the
+# very "agent landed in the parent cwd" fallback this hook exists to prevent.
+# jj resolves concurrent `jj workspace add` operations via op-log merge, so
+# parallel creates are safe; a short retry loop covers rare op-log contention.
+add_workspace() {
+  (cd "$repo_root" && jj workspace add "$dest" --name "$name" -r @) 2>&1
+}
 
-# Let `jj workspace add` be the atomic arbiter — it will reject duplicate
-# workspace names and fail if the destination directory already exists.
-if add_err=$( (cd "$repo_root" && jj workspace add "$dest" --name "$name" -r @) 2>&1 ); then
-  echo "$dest"
-  exit 0
-fi
+err=""
+for attempt in 1 2 3 4 5; do
+  # If jj already tracks this name, the workspace is live (unique agent ids make
+  # this rare outside of an idempotent re-invocation).
+  if (cd "$repo_root" && jj workspace list 2>/dev/null) | grep -q "^${name}: "; then
+    if [ -d "$dest/.jj" ]; then
+      # Registered AND present on disk: hand back the path (idempotent retry).
+      echo "$dest"
+      exit 0
+    fi
+    echo "error: workspace '$name' is registered with jj but its directory is missing" >&2
+    exit 1
+  fi
 
-# Creation failed — diagnose whether this is a live workspace or a stale leftover.
-workspace_tracked=false
-if (cd "$repo_root" && jj workspace list 2>/dev/null) | grep -q "^${name}: "; then
-  workspace_tracked=true
-fi
+  # A leftover directory with no jj registration is a stale remnant; clear it so
+  # `jj workspace add` (which refuses a non-empty destination) can proceed.
+  [ -e "$dest" ] && rm -rf "$dest"
 
-# jj still tracks the workspace — it's occupied. Refuse to clobber.
-if [ "$workspace_tracked" = true ]; then
-  echo "error: workspace '$name' is already active — refusing to clobber" >&2
-  exit 1
-fi
+  if err=$(add_workspace); then
+    # Validate before committing to the path: print it only if the workspace
+    # actually materialised on disk.
+    if [ -d "$dest/.jj" ]; then
+      echo "$dest"
+      exit 0
+    fi
+  fi
 
-# Directory exists but jj doesn't track the workspace — stale leftover.
-# Safe to remove the directory and retry.
-if [ -d "$dest" ]; then
-  rm -rf "$dest"
-  (cd "$repo_root" && jj workspace add "$dest" --name "$name" -r @) >&2
-  echo "$dest"
-  exit 0
-fi
+  sleep 0.2
+done
 
-# Unknown failure — surface the original error.
-echo "error: failed to create workspace '$name'" >&2
-echo "$add_err" >&2
+echo "error: failed to create jj workspace '$name' after 5 attempts" >&2
+echo "$err" >&2
 exit 1

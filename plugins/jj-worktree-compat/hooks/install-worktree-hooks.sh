@@ -37,10 +37,10 @@ fi
 # --- Build and inject -------------------------------------------------------
 
 desired_create=$(jq -n --arg cmd "$create_cmd" \
-  '{_managed_by: "jj-worktree-compat", hooks: [{type: "command", command: $cmd, timeout: 30}]}')
+  '{_managed_by: "jj-worktree-compat", hooks: [{type: "command", command: $cmd, timeout: 120}]}')
 
 desired_remove=$(jq -n --arg cmd "$remove_cmd" \
-  '{_managed_by: "jj-worktree-compat", hooks: [{type: "command", command: $cmd, timeout: 30}]}')
+  '{_managed_by: "jj-worktree-compat", hooks: [{type: "command", command: $cmd, timeout: 120}]}')
 
 updated=$(echo "$current" | jq \
   --argjson create "$desired_create" \
