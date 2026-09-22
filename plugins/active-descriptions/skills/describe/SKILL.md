@@ -48,17 +48,22 @@ This plugin includes a Stop hook that blocks the session from ending when
 changes have diverged from their description. When the stop hook fires,
 treat each flagged change as a describe target:
 
-1. Run `jj diff -r <change>` to get the full current diff.
-2. Enter the standard workflow below (Phase 1–2) for that change.
+1. Read the full current diff in a read-only tool call.
+2. After that call returns, enter the analysis and writing phases below.
 
 Handle multiple flagged changes sequentially.
 
 ## Phase 1: Internal analysis
 
-Before engaging the human, analyze internally:
+**The diff must be able to change the description.** Run `jj diff` (or
+`jj diff -r <change>`) in a read-only tool call and wait for its output.
+Read the full relevant diff; a file list, `--stat`, or truncated output
+is not enough. Fetch missing portions before proceeding.
 
-- **The diff.** Ground truth. Run `jj diff` (or `jj diff -r <change>`) and
-  account for everything that actually changed, not just what was intended.
+Then reason about the returned evidence before composing the description:
+
+- **The diff.** Ground truth. Account for everything that actually changed,
+  not just what was intended.
   The description may not contradict or omit from the diff.
 - **The conversation history.** The full decision trail — every directive,
   correction, and change of direction. This is a first-class input, not
@@ -70,11 +75,29 @@ Before engaging the human, analyze internally:
 This gives you a rich but incomplete picture. The gaps are what the
 human knows but never said aloud.
 
+This is a causal checkpoint, not command ordering. Do not put the diff
+and `jj describe` or `jj commit` in the same shell command, tool call,
+batch, or orchestration script, even if execution is sequential. A
+prewritten message supplied alongside the diff cannot incorporate its
+output. Separate commands within one tool call do not satisfy this rule.
+
+Use the intervening reasoning to decide whether the observed scope,
+rationale, validation claims, or change boundaries require revision.
+The message need not change if the evidence supports it; do not invent
+revisions to demonstrate compliance. User-facing narration of the internal
+reasoning is not required.
+
 ## Phase 2: Write and apply
 
-Write the full description using everything available: the diff, the
-conversation history, and your mechanical analysis. Apply it directly
-via `jj describe`.
+Only after inspecting the returned diff and reasoning about it, compose
+or revise the full description using that evidence and the conversation
+history. Apply it via `jj describe` in a later, separate tool call.
+If using `jj commit` to apply a description and advance the working copy,
+the same separation applies.
+
+If the change is edited after inspection, read the updated diff and
+reassess the description before applying it. For a path-limited commit,
+inspect and describe precisely the selected changes.
 
 **Match depth to the change.** Not every commit warrants a lengthy body.
 Reason about proportionality for each specific change in its specific
