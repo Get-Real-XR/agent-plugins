@@ -1,0 +1,14 @@
+---
+source: src/message.rs
+expression: "ReadOnlyNotice { default_root: root() }.to_string()"
+---
+jj-workspace-guard: default@ is read-only for agents.
+
+/home/dev/repos/project is the default jj workspace (default@). The user and other agents share its working copy, so an edit or state-changing command here lands in someone else's in-progress change.
+
+Reading is fine here. Before changing anything (editing files, jj or git commands that change state, builds), move to a jj workspace of your own:
+  1. Run `jj workspace list` to find one already made for this task, or create one with `mkdir -p /home/dev/repos/project/workspaces && jj workspace add /home/dev/repos/project/workspaces/<name> -r <base revision>` (allowed from default@, as is appending to the repo's .git/info/exclude).
+  2. `cd /home/dev/repos/project/workspaces/<name>`. The Bash tool keeps that directory for later calls, and commands run there are not restricted.
+  3. Edit and Write files by absolute path under /home/dev/repos/project/workspaces/<name>/.
+
+Edits and non-read-only Bash commands in default@ are blocked, and the block message lists what is allowed.

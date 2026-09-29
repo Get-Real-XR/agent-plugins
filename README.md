@@ -19,7 +19,7 @@ claude plugin install jj-tutor@agent-plugins
 claude plugin install jj-worktree-compat@agent-plugins
 ```
 
-All four work together but can be installed independently.
+All four work together but can be installed independently. [jj-workspace-guard](#jj-workspace-guard) is opt-in on top of them: it changes what agents may do in your main checkout.
 
 ## Plugins
 
@@ -72,6 +72,19 @@ Routes Claude Code worktree isolation through jj workspaces.
 
 Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal. Drop-in replacement for Claude Code's built-in git worktrees.
 
+### jj-workspace-guard
+
+Makes the default jj workspace (`default@`) read-only for agents, so parallel agents never edit a working copy you or another agent is in the middle of.
+
+| | |
+|---|---|
+| **Install** | `claude plugin install jj-workspace-guard@agent-plugins` |
+| **Requires** | jj, Rust toolchain (cargo) |
+
+A `PreToolUse` hook blocks `Edit`, `Write` and `NotebookEdit` on files inside `default@`, and Bash commands run there unless every command in them is on a read-only allowlist (`ls`, `rg`, `jq`, `jj log`, `git diff`, `gh pr view`, …). The bash is parsed, so pipes, loops, substitutions and redirects are checked piece by piece, and a leading `cd` into another workspace is followed. The block message tells the agent to create its own workspace with `jj workspace add`, `cd` into it, and work there, where nothing is restricted.
+
+It guards against mistakes, not adversaries: once an agent's shell is in another workspace, the guard does not inspect what its commands touch.
+
 ## How the jj plugins work together
 
 - **active-descriptions** enforces that every session ends with up-to-date descriptions, using **conventional-commits** for formatting. `/describe` ties them together.
@@ -86,6 +99,7 @@ Creates a jj workspace sharing the same parents as your current working copy; cl
 | conventional-commits | — | — |
 | jj-tutor | required | — |
 | jj-worktree-compat | required | — |
+| jj-workspace-guard | required | required |
 
 Install jj: [jj-vcs.github.io/jj/latest/install-and-setup](https://jj-vcs.github.io/jj/latest/install-and-setup/)
 Install Rust: [rustup.rs](https://rustup.rs/)

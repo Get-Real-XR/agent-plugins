@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v cargo >/dev/null 2>&1 || { echo 'jj-workspace-guard: cargo (Rust toolchain) is required but not found. Install: https://rustup.rs/' >&2; exit 1; }; cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

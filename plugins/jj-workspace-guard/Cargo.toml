@@ -1,0 +1,39 @@
+[package]
+name = "jj-workspace-guard"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "PreToolUse hook that keeps agents from writing in the default jj workspace"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+brush-parser = "0.4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+insta = "1.48.0"
+rstest = "0.27.0"
+tempfile = "3.27.0"
+
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+todo = "warn"
+unimplemented = "warn"
+str_to_string = "warn"
+
+[lints.rust]
+unsafe_code = "deny"
