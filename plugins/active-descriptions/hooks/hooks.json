@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "msg=$(cargo run -r --manifest-path ${CLAUDE_PLUGIN_ROOT}/Cargo.toml -- 'trunk()..@ ~ empty()' 2>/dev/null) || exit 0; [ -n \"$msg\" ] || exit 0; echo \"$msg\" >&2; exit 2",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stale-check.sh\" 'trunk()..@ ~ empty()'",
             "timeout": 300
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "msg=$(cargo run -r --manifest-path ${CLAUDE_PLUGIN_ROOT}/Cargo.toml -- 'default@..@ ~ empty()' 2>/dev/null) || exit 0; [ -n \"$msg\" ] || exit 0; echo \"$msg\" >&2; exit 2",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stale-check.sh\" 'default@..@ ~ empty()'",
             "timeout": 300
           }
         ]
