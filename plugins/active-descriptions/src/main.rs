@@ -159,13 +159,16 @@ fn load_repo() -> Result<Arc<ReadonlyRepo>> {
 /// Resolves the repo path, following jj's workspace indirection.
 ///
 /// In secondary workspaces, `.jj/repo` is a file containing the path to the
-/// primary workspace's repo directory rather than a directory itself.
+/// primary workspace's repo directory rather than a directory itself. jj
+/// writes that path relative to the `.jj` directory holding the pointer.
 fn resolve_repo_path(path: &Path) -> Result<PathBuf> {
     if path.is_file() {
         let target = fs::read_to_string(path)
             .with_context(|| format!("failed to read repo pointer at {}", path.display()))?;
-        let target = target.trim();
-        Ok(PathBuf::from(target))
+        let dot_jj = path
+            .parent()
+            .with_context(|| format!("repo pointer {} has no parent", path.display()))?;
+        Ok(dot_jj.join(target.trim()))
     } else {
         Ok(path.to_path_buf())
     }
@@ -436,6 +439,24 @@ mod tests {
             })
             .collect();
         create_tree(repo, &path_contents)
+    }
+
+    #[test]
+    fn repo_pointer_resolves_relative_to_its_dot_jj() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = dir.path().join("project/.jj/repo");
+        let pointer = dir.path().join("project/workspaces/mine/.jj/repo");
+        fs::create_dir_all(&store).expect("store dir");
+        fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("pointer dir");
+        // The form jj writes for a workspace nested in the default one.
+        fs::write(&pointer, "../../../.jj/repo").expect("pointer");
+
+        let resolved = resolve_repo_path(&pointer).expect("resolve");
+        assert_eq!(
+            resolved.canonicalize().expect("exists"),
+            store.canonicalize().expect("exists")
+        );
+        assert_eq!(resolve_repo_path(&store).expect("resolve"), store);
     }
 
     #[test]
