@@ -14,6 +14,13 @@ name=$(basename "$worktree_path")
 # concurrent operations via op-log merge, so a remove is safe alongside other
 # concurrent creates/removes.
 #
+# Snapshot first: jj records a workspace's file edits only when a jj command
+# runs in it, so edits made since the agent's last jj command would otherwise
+# be deleted with the directory below.
+if [ -d "$worktree_path/.jj" ]; then
+  (cd "$worktree_path" && jj status >/dev/null 2>&1) || true
+fi
+
 # Forget the workspace from jj's registry, then remove its directory. Prefer
 # forgetting by name from the repo root — that works even if the workspace
 # directory is already gone or its .jj link is broken — and fall back to a

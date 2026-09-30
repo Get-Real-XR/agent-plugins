@@ -23,8 +23,21 @@ repo_root=$(cd "$cwd" && jj root)
 
 # Place workspaces under <root>/.claude/worktrees/<name> — the location Claude
 # Code expects for managed worktrees ("created under .claude/worktrees/ of this
-# repository").
-worktree_base="$repo_root/.claude/worktrees"
+# repository") — or under JJ_WORKTREE_COMPAT_DIR when set. A relative
+# directory is taken from the default workspace's root, so a caller that is
+# itself in an added workspace does not nest new workspaces inside it; that
+# workspace's `.jj/repo` is a file holding a path to the store, relative to
+# its `.jj` directory.
+store="$repo_root/.jj/repo"
+if [ -f "$store" ]; then
+  store=$(cd "$repo_root/.jj" && cd "$(cat repo)" && pwd)
+fi
+default_root=$(dirname "$(dirname "$store")")
+dir=${JJ_WORKTREE_COMPAT_DIR:-.claude/worktrees}
+case "$dir" in
+  /*) worktree_base=$dir ;;
+  *) worktree_base="$default_root/$dir" ;;
+esac
 dest="$worktree_base/$name"
 mkdir -p "$worktree_base"
 
