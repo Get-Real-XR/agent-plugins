@@ -17,14 +17,15 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use jj_lib::backend::CommitId;
+use futures::StreamExt as _;
+use jj_lib::backend::{CommitId, MergedTreeValue};
 use jj_lib::commit::Commit;
 use jj_lib::config::StackedConfig;
+use jj_lib::default_backend_factories::default_backend_factories;
 use jj_lib::evolution::walk_predecessors;
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::merge::Diff;
-use jj_lib::merge::MergedTreeValue;
-use jj_lib::repo::{ReadonlyRepo, Repo as _, RepoLoader, StoreFactories};
+use jj_lib::repo::{ReadonlyRepo, Repo as _, RepoLoader};
 use jj_lib::repo_path::RepoPathBuf;
 use jj_lib::settings::UserSettings;
 use pollster::FutureExt as _;
@@ -143,12 +144,13 @@ fn load_repo() -> Result<Arc<ReadonlyRepo>> {
     let config = StackedConfig::with_defaults();
     let settings =
         UserSettings::from_config(config).context("failed to create UserSettings from defaults")?;
-    let store_factories = StoreFactories::default();
+    let store_factories = default_backend_factories();
 
     let loader = RepoLoader::init_from_file_system(&settings, &repo_path, &store_factories)
         .context("failed to init repo loader")?;
     let repo = loader
         .load_at_head()
+        .block_on()
         .context("failed to load repo at head")?;
 
     Ok(repo)
@@ -229,7 +231,8 @@ fn check_staleness(repo: &ReadonlyRepo, commit_id: &CommitId) -> Result<Option<S
     // Collect evolution entries (newest first from walk_predecessors, so we
     // reverse to get chronological order).
     let mut entries = Vec::new();
-    for result in walk_predecessors(repo, std::slice::from_ref(commit_id)) {
+    let mut evolution = std::pin::pin!(walk_predecessors(repo, std::slice::from_ref(commit_id)));
+    while let Some(result) = evolution.next().block_on() {
         let entry = result.context("evolog walk failed")?;
         entries.push(entry);
         if entries.len() >= MAX_EVOLOG_ENTRIES {
@@ -286,13 +289,12 @@ fn commit_diff_fingerprint(
     commit: &Commit,
 ) -> Result<BTreeMap<RepoPathBuf, Diff<MergedTreeValue>>> {
     let tree = commit.tree();
-    let parent_tree = commit.parent_tree(repo)?;
+    let parent_tree = commit.parent_tree(repo).block_on()?;
 
     let mut fingerprint = BTreeMap::new();
     let mut stream = parent_tree.diff_stream(&tree, &EverythingMatcher);
 
     async {
-        use futures::StreamExt as _;
         while let Some(entry) = stream.next().await {
             let diff = entry.values?;
             fingerprint.insert(entry.path, diff);
@@ -447,8 +449,9 @@ mod tests {
             .repo_mut()
             .new_commit(vec![repo.store().root_commit_id().clone()], t)
             .write()
+            .block_on()
             .expect("write commit");
-        let repo = tx.commit("create").expect("commit tx");
+        let repo = tx.commit("create").block_on().expect("commit tx");
 
         assert!(check_staleness(&repo, commit.id())
             .expect("check_staleness")
@@ -467,8 +470,9 @@ mod tests {
             .new_commit(vec![repo.store().root_commit_id().clone()], t)
             .set_description("feat: add file")
             .write()
+            .block_on()
             .expect("write commit");
-        let repo = tx.commit("create").expect("commit tx");
+        let repo = tx.commit("create").block_on().expect("commit tx");
 
         assert!(check_staleness(&repo, commit.id())
             .expect("check_staleness")
@@ -488,8 +492,9 @@ mod tests {
             .new_commit(vec![repo.store().root_commit_id().clone()], t)
             .set_description("feat: initial")
             .write()
+            .block_on()
             .expect("write");
-        let repo = tx.commit("create").expect("tx");
+        let repo = tx.commit("create").block_on().expect("tx");
 
         // Edit content without updating description.
         let t2 = tree(&repo, &[("file.txt", "v2")]);
@@ -499,9 +504,10 @@ mod tests {
             .rewrite_commit(&c1)
             .set_tree(t2)
             .write()
+            .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("edit").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("edit").block_on().expect("tx");
 
         let info = check_staleness(&repo, c2.id())
             .expect("check_staleness")
@@ -525,8 +531,9 @@ mod tests {
             .new_commit(vec![repo.store().root_commit_id().clone()], t)
             .set_description("feat: initial")
             .write()
+            .block_on()
             .expect("write");
-        let repo = tx.commit("create").expect("tx");
+        let repo = tx.commit("create").block_on().expect("tx");
 
         // Edit content.
         let t2 = tree(&repo, &[("file.txt", "v2")]);
@@ -536,9 +543,10 @@ mod tests {
             .rewrite_commit(&c1)
             .set_tree(t2)
             .write()
+            .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("edit content").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("edit content").block_on().expect("tx");
 
         // Update description to match.
         let mut tx = repo.start_transaction();
@@ -547,9 +555,10 @@ mod tests {
             .rewrite_commit(&c2)
             .set_description("feat: updated")
             .write()
+            .block_on()
             .expect("describe");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("describe").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("describe").block_on().expect("tx");
 
         assert!(check_staleness(&repo, c3.id())
             .expect("check_staleness")
@@ -570,8 +579,9 @@ mod tests {
             .new_commit(vec![root_id.clone()], parent_tree)
             .set_description("base")
             .write()
+            .block_on()
             .expect("write parent");
-        let repo = tx.commit("create parent").expect("tx");
+        let repo = tx.commit("create parent").block_on().expect("tx");
 
         // Create child commit with description.
         let child_tree = tree(&repo, &[("base.txt", "base"), ("feat.txt", "feature")]);
@@ -581,8 +591,9 @@ mod tests {
             .new_commit(vec![parent.id().clone()], child_tree)
             .set_description("feat: add feature")
             .write()
+            .block_on()
             .expect("write child");
-        let repo = tx.commit("create child").expect("tx");
+        let repo = tx.commit("create child").block_on().expect("tx");
 
         // Simulate rebase: change parent but keep same diff (feat.txt added).
         let new_parent_tree =
@@ -593,6 +604,7 @@ mod tests {
             .new_commit(vec![root_id.clone()], new_parent_tree)
             .set_description("base v2")
             .write()
+            .block_on()
             .expect("write new parent");
 
         // Rebased child: new parent, but still adds feat.txt.
@@ -610,9 +622,10 @@ mod tests {
             .set_parents(vec![new_parent.id().clone()])
             .set_tree(rebased_tree)
             .write()
+            .block_on()
             .expect("rebase");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("rebase").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("rebase").block_on().expect("tx");
 
         // Diff is still just "add feat.txt" → not stale.
         assert!(check_staleness(&repo, rebased.id())
@@ -634,8 +647,9 @@ mod tests {
             .new_commit(vec![root_id.clone()], t)
             .set_description("feat: add a and b")
             .write()
+            .block_on()
             .expect("write");
-        let repo = tx.commit("create").expect("tx");
+        let repo = tx.commit("create").block_on().expect("tx");
 
         // Simulate split: first commit gets b.txt, second (rewrite of
         // original) gets a.txt but is reparented onto first.
@@ -646,6 +660,7 @@ mod tests {
             .new_commit(vec![root_id.clone()], first_tree)
             .set_description("feat: add b")
             .write()
+            .block_on()
             .expect("write first");
 
         // Remaining commit: reparented, full tree includes parent's b.txt.
@@ -658,9 +673,10 @@ mod tests {
             .set_tree(remaining_tree)
             .set_description("feat: add a")
             .write()
+            .block_on()
             .expect("write remaining");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("split").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("split").block_on().expect("tx");
 
         // The remaining commit's diff is "add a.txt", and its description
         // was set in the same operation. Not stale.
@@ -683,8 +699,9 @@ mod tests {
             .new_commit(vec![root_id.clone()], t)
             .set_description("feat: add original")
             .write()
+            .block_on()
             .expect("write");
-        let repo = tx.commit("create").expect("tx");
+        let repo = tx.commit("create").block_on().expect("tx");
 
         // Squash new content in without updating description.
         let t2 = tree(&repo, &[("original.txt", "content"), ("extra.txt", "extra")]);
@@ -694,9 +711,10 @@ mod tests {
             .rewrite_commit(&c1)
             .set_tree(t2)
             .write()
+            .block_on()
             .expect("squash");
-        tx.repo_mut().rebase_descendants().expect("rebase descendants");
-        let repo = tx.commit("squash").expect("tx");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("squash").block_on().expect("tx");
 
         // Diff changed (now includes extra.txt) but description wasn't updated.
         let info = check_staleness(&repo, c2.id())
