@@ -91,6 +91,8 @@ A `PreToolUse` hook blocks `Edit`, `Write` and `NotebookEdit` on files inside `d
 
 It guards against mistakes, not adversaries: once an agent's shell is in another workspace, the guard does not inspect what its commands touch.
 
+Repos that are not projects, such as a home directory or a dotfiles source tracked with jj, can opt out with `jj config set --repo jj-workspace-guard.enabled false`, run in that repo. Claude Code's memory directories (`~/.claude/projects/*/memory/`) are always writable.
+
 ## How the jj plugins work together
 
 - **active-descriptions** enforces that every session ends with up-to-date descriptions, using **conventional-commits** for formatting. `/describe` ties them together.

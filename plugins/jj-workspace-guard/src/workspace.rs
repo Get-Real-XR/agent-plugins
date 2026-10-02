@@ -1,6 +1,9 @@
 //! Finding which jj workspace a path belongs to.
 
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Returns the root of the default jj workspace containing `path`, or `None`
 /// when `path` is in an added workspace or outside any jj repo.
@@ -13,26 +16,59 @@ use std::path::{Component, Path, PathBuf};
 ///
 /// `path` must be absolute but need not exist, since a write may create it.
 /// Symlinks in its longest existing prefix are resolved.
+///
+/// A repo whose jj repo config sets `jj-workspace-guard.enabled = false` is
+/// never guarded: that is for repos that are not projects, such as a home
+/// directory or a dotfiles source tracked with jj.
 pub fn default_workspace_root(path: &Path) -> Option<PathBuf> {
     let resolved = resolve_existing_prefix(path);
     let workspace_root = resolved.ancestors().find(|dir| dir.join(".jj").is_dir())?;
-    workspace_root
-        .join(".jj/repo")
-        .is_dir()
+    (workspace_root.join(".jj/repo").is_dir() && guarded(workspace_root))
         .then(|| workspace_root.to_path_buf())
+}
+
+/// Whether the repo at `root` has not opted out of the guard. Asks jj, so
+/// the setting is read wherever jj keeps repo config; a failure to ask counts
+/// as guarded. Cached because one hook call may check several paths.
+fn guarded(root: &Path) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *cache.entry(root.to_path_buf()).or_insert_with(|| {
+        Command::new("jj")
+            .args(["--ignore-working-copy", "-R"])
+            .arg(root)
+            .args(["config", "get", "jj-workspace-guard.enabled"])
+            .output()
+            .map_or(true, |output| String::from_utf8_lossy(&output.stdout).trim() != "false")
+    })
 }
 
 /// Returns the root of the default jj workspace that writing `path` would
 /// change, or `None` if the write is allowed.
 ///
-/// That is [`default_workspace_root`], except for the repo's git exclude file:
-/// it is local, untracked configuration, and an agent in default@ needs to
-/// exclude the `workspaces/` directory it is about to create.
+/// That is [`default_workspace_root`], with two exceptions. The repo's git
+/// exclude file is local, untracked configuration, and an agent in default@
+/// needs to exclude the `workspaces/` directory it is about to create.
+/// Claude Code's per-project memory directory is where Claude Code tells
+/// agents to write, wherever they work.
 pub fn default_workspace_written(path: &Path) -> Option<PathBuf> {
+    if std::env::var_os("HOME").is_some_and(|home| is_claude_memory(path, Path::new(&home))) {
+        return None;
+    }
     let root = default_workspace_root(path)?;
     let resolved = resolve_existing_prefix(path);
     let exclude_files = [".git/info/exclude", ".jj/repo/store/git/info/exclude"];
     (!exclude_files.iter().any(|file| resolved == root.join(file))).then_some(root)
+}
+
+/// Whether `path` is inside `<home>/.claude/projects/<project>/memory/`.
+fn is_claude_memory(path: &Path, home: &Path) -> bool {
+    resolve_existing_prefix(path)
+        .strip_prefix(resolve_existing_prefix(&home.join(".claude/projects")))
+        .is_ok_and(|rest| rest.components().nth(1).is_some_and(|dir| dir.as_os_str() == "memory"))
 }
 
 /// Joins `path` onto `base` and removes `.` and `..` components lexically.
@@ -70,7 +106,42 @@ pub(crate) mod tests {
     use rstest::{fixture, rstest};
     use tempfile::TempDir;
 
-    use super::{absolutize, default_workspace_root, default_workspace_written};
+    use super::{absolutize, default_workspace_root, default_workspace_written, is_claude_memory};
+
+    #[test]
+    fn claude_memory_is_recognised_and_nothing_else_under_claude() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let projects = home.join(".claude/projects");
+        assert!(is_claude_memory(&projects.join("-home-dev-repo/memory/note.md"), home));
+        assert!(is_claude_memory(&projects.join("-home-dev-repo/memory/MEMORY.md"), home));
+        assert!(!is_claude_memory(&projects.join("-home-dev-repo/transcript.jsonl"), home));
+        assert!(!is_claude_memory(&home.join(".claude/settings.json"), home));
+        assert!(!is_claude_memory(&home.join("repo/memory/note.md"), home));
+    }
+
+    #[test]
+    fn a_repo_can_opt_out_through_its_jj_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        let jj = |root: &std::path::Path, args: &[&str]| {
+            std::fs::create_dir_all(root).unwrap();
+            let output = std::process::Command::new("jj")
+                .current_dir(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "jj {args:?}");
+        };
+        let guarded = base.join("project");
+        jj(&guarded, &["git", "init", "."]);
+        let opted_out = base.join("dotfiles");
+        jj(&opted_out, &["git", "init", "."]);
+        jj(&opted_out, &["config", "set", "--repo", "jj-workspace-guard.enabled", "false"]);
+
+        assert_eq!(default_workspace_root(&guarded.join("src/main.rs")), Some(guarded));
+        assert_eq!(default_workspace_root(&opted_out.join("nu/config.nu")), None);
+    }
 
     /// A default workspace at `root`, an added workspace nested at
     /// `root/workspaces/mine` (the layout the block message recommends), and a
