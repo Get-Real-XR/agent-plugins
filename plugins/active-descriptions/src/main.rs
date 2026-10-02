@@ -46,8 +46,23 @@ struct StalenessInfo {
 }
 
 fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    // `ack` is run by an agent, so its errors are reported, not swallowed.
+    if args.first().map(String::as_str) == Some("ack") {
+        let revset = args.get(1).map_or("@", String::as_str);
+        if let Err(e) = acknowledge(revset) {
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("active-descriptions ack: {e:#}");
+            }
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Fail open: any error → exit 0 so we never block Claude.
-    if let Err(e) = run() {
+    if let Err(e) = run(&args) {
         // Only surface errors when debugging.
         if env::var_os("ACTIVE_DESCRIPTIONS_DEBUG").is_some() {
             #[allow(clippy::print_stderr)]
@@ -58,14 +73,14 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
-    let revset = env::args()
-        .nth(1)
-        .context("usage: jj-stale-descriptions <revset>")?;
+fn run(args: &[String]) -> Result<()> {
+    let revset = args
+        .first()
+        .context("usage: jj-stale-descriptions [ack] <revset>")?;
 
     // Gather candidate commit IDs via subprocess (evaluates revset with full
     // CLI context, triggers working-copy snapshot).
-    let candidate_hex = gather_candidates(&revset).map_err(|e| {
+    let candidate_hex = gather_candidates(revset).map_err(|e| {
         // Exit 1 signals revset failure to the shell wrapper.
         if env::var_os("ACTIVE_DESCRIPTIONS_DEBUG").is_some() {
             #[allow(clippy::print_stderr)]
@@ -81,14 +96,15 @@ fn run() -> Result<()> {
     }
 
     // Load repo via jj-lib.
-    let repo = load_repo()?;
+    let (repo, repo_path) = load_repo()?;
+    let acks = Acks::load(&repo_path)?;
 
     // Check each candidate for staleness.
     let mut stale: Vec<StalenessInfo> = Vec::new();
     for hex in &candidate_hex {
         let commit_id = CommitId::try_from_hex(hex.as_bytes())
             .with_context(|| format!("invalid commit id hex: {hex}"))?;
-        if let Some(info) = check_staleness(&repo, &commit_id)? {
+        if let Some(info) = check_staleness(&repo, &commit_id, &acks)? {
             stale.push(info);
         }
     }
@@ -104,6 +120,95 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Records that each change in `revset` still matches its description,
+/// although its diff changed since it was described (for example after
+/// `jj fix` or regenerating code), so the stale check accepts it until its
+/// diff changes again.
+fn acknowledge(revset: &str) -> Result<()> {
+    let candidate_hex = gather_candidates(revset)?;
+    let (repo, repo_path) = load_repo()?;
+    let mut acks = Acks::load(&repo_path)?;
+    let mut acknowledged = Vec::new();
+    for hex in &candidate_hex {
+        let commit_id = CommitId::try_from_hex(hex.as_bytes())
+            .with_context(|| format!("invalid commit id hex: {hex}"))?;
+        let commit = repo.store().get_commit(&commit_id)?;
+        // An empty description is always stale; there is nothing to confirm.
+        if commit.description().is_empty() {
+            continue;
+        }
+        let change_id = commit.change_id().to_string();
+        acks.record(&change_id, &commit_diff_fingerprint(&repo, &commit)?);
+        acknowledged.push(change_id[..change_id.len().min(12)].to_owned());
+    }
+    acks.save()?;
+    #[allow(clippy::print_stdout)]
+    {
+        println!("Acknowledged {} change(s): {}", acknowledged.len(), acknowledged.join(", "));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Acknowledgements
+// ---------------------------------------------------------------------------
+
+/// A change's diff from its parents, keyed by path.
+type Fingerprint = BTreeMap<RepoPathBuf, Diff<MergedTreeValue>>;
+
+/// Changes whose current diff an agent has confirmed still matches their
+/// description: full change ID → hash of that diff. Kept in the repo store,
+/// so every workspace shares it and it is never committed.
+struct Acks {
+    path: PathBuf,
+    entries: BTreeMap<String, String>,
+}
+
+impl Acks {
+    fn load(repo_path: &Path) -> Result<Self> {
+        let path = repo_path.join("active-descriptions-acks");
+        let entries = match fs::read_to_string(&path) {
+            Ok(text) => text
+                .lines()
+                .filter_map(|line| line.split_once(' '))
+                .map(|(change, hash)| (change.to_owned(), hash.to_owned()))
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(e) => return Err(e).with_context(|| format!("failed to read {}", path.display())),
+        };
+        Ok(Self { path, entries })
+    }
+
+    fn covers(&self, change_id: &str, fingerprint: &Fingerprint) -> bool {
+        self.entries.get(change_id) == Some(&fingerprint_hash(fingerprint))
+    }
+
+    fn record(&mut self, change_id: &str, fingerprint: &Fingerprint) {
+        self.entries
+            .insert(change_id.to_owned(), fingerprint_hash(fingerprint));
+    }
+
+    /// Writes through a temporary file so concurrent readers never see a
+    /// partial file.
+    fn save(&self) -> Result<()> {
+        let text: String = self
+            .entries
+            .iter()
+            .map(|(change, hash)| format!("{change} {hash}\n"))
+            .collect();
+        let temp = self.path.with_extension("tmp");
+        fs::write(&temp, text).with_context(|| format!("failed to write {}", temp.display()))?;
+        fs::rename(&temp, &self.path)
+            .with_context(|| format!("failed to replace {}", self.path.display()))
+    }
+}
+
+fn fingerprint_hash(fingerprint: &Fingerprint) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(format!("{fingerprint:?}").as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +242,7 @@ fn gather_candidates(revset: &str) -> Result<Vec<String>> {
 
 /// Loads the repo at HEAD. Discovers the workspace root from `jj root`, then
 /// initializes a `RepoLoader` from the `.jj/repo` path.
-fn load_repo() -> Result<Arc<ReadonlyRepo>> {
+fn load_repo() -> Result<(Arc<ReadonlyRepo>, PathBuf)> {
     let workspace_root = discover_workspace_root()?;
     let repo_path = resolve_repo_path(&workspace_root.join(".jj").join("repo"))?;
 
@@ -153,7 +258,7 @@ fn load_repo() -> Result<Arc<ReadonlyRepo>> {
         .block_on()
         .context("failed to load repo at head")?;
 
-    Ok(repo)
+    Ok((repo, repo_path))
 }
 
 /// Resolves the repo path, following jj's workspace indirection.
@@ -213,7 +318,11 @@ fn discover_workspace_root() -> Result<PathBuf> {
 /// This compares actual diffs rather than using heuristics about tree/parent
 /// change ordering, which avoids false positives from splits, squashes, and
 /// rebases that alter the tree without changing the logical content.
-fn check_staleness(repo: &ReadonlyRepo, commit_id: &CommitId) -> Result<Option<StalenessInfo>> {
+fn check_staleness(
+    repo: &ReadonlyRepo,
+    commit_id: &CommitId,
+    acks: &Acks,
+) -> Result<Option<StalenessInfo>> {
     let commit = repo.store().get_commit(commit_id)?;
 
     // ChangeId::Display uses reverse_hex (the user-facing jj format).
@@ -270,7 +379,7 @@ fn check_staleness(repo: &ReadonlyRepo, commit_id: &CommitId) -> Result<Option<S
     let described_diff = commit_diff_fingerprint(repo, described_commit)?;
     let current_diff = commit_diff_fingerprint(repo, &commit)?;
 
-    if described_diff == current_diff {
+    if described_diff == current_diff || acks.covers(&full_change_id, &current_diff) {
         return Ok(None);
     }
 
@@ -474,7 +583,7 @@ mod tests {
             .expect("write commit");
         let repo = tx.commit("create").block_on().expect("commit tx");
 
-        assert!(check_staleness(&repo, commit.id())
+        assert!(check_staleness(&repo, commit.id(), &no_acks())
             .expect("check_staleness")
             .is_some());
     }
@@ -495,9 +604,65 @@ mod tests {
             .expect("write commit");
         let repo = tx.commit("create").block_on().expect("commit tx");
 
-        assert!(check_staleness(&repo, commit.id())
+        assert!(check_staleness(&repo, commit.id(), &no_acks())
             .expect("check_staleness")
             .is_none());
+    }
+
+    #[test]
+    fn acknowledged_edit_is_not_stale_until_the_diff_changes_again() {
+        let test_repo = TestRepo::init();
+        let repo = &test_repo.repo;
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Describe, then change content the way `jj fix` would.
+        let mut tx = repo.start_transaction();
+        let c1 = tx
+            .repo_mut()
+            .new_commit(vec![repo.store().root_commit_id().clone()], tree(repo, &[("file.txt", "v1")]))
+            .set_description("feat: initial")
+            .write()
+            .block_on()
+            .expect("write");
+        let repo = tx.commit("create").block_on().expect("tx");
+        let mut tx = repo.start_transaction();
+        let c2 = tx
+            .repo_mut()
+            .rewrite_commit(&c1)
+            .set_tree(tree(&repo, &[("file.txt", "v1 reformatted")]))
+            .write()
+            .block_on()
+            .expect("rewrite");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("fix").block_on().expect("tx");
+
+        // Acknowledging the current diff clears it, across a save and reload.
+        let mut acks = Acks::load(dir.path()).expect("load");
+        let change_id = c2.change_id().to_string();
+        acks.record(&change_id, &commit_diff_fingerprint(&repo, &c2).expect("fingerprint"));
+        acks.save().expect("save");
+        let acks = Acks::load(dir.path()).expect("reload");
+        assert!(check_staleness(&repo, c2.id(), &acks).expect("check").is_none());
+
+        // A later content change is stale again.
+        let mut tx = repo.start_transaction();
+        let c3 = tx
+            .repo_mut()
+            .rewrite_commit(&c2)
+            .set_tree(tree(&repo, &[("file.txt", "v2")]))
+            .write()
+            .block_on()
+            .expect("rewrite");
+        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        let repo = tx.commit("edit").block_on().expect("tx");
+        assert!(check_staleness(&repo, c3.id(), &acks).expect("check").is_some());
+    }
+
+    fn no_acks() -> Acks {
+        Acks {
+            path: PathBuf::from("/nonexistent/active-descriptions-acks"),
+            entries: BTreeMap::new(),
+        }
     }
 
     #[test]
@@ -530,7 +695,7 @@ mod tests {
         tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
         let repo = tx.commit("edit").block_on().expect("tx");
 
-        let info = check_staleness(&repo, c2.id())
+        let info = check_staleness(&repo, c2.id(), &no_acks())
             .expect("check_staleness")
             .expect("should be stale");
         assert_eq!(
@@ -581,7 +746,7 @@ mod tests {
         tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
         let repo = tx.commit("describe").block_on().expect("tx");
 
-        assert!(check_staleness(&repo, c3.id())
+        assert!(check_staleness(&repo, c3.id(), &no_acks())
             .expect("check_staleness")
             .is_none());
     }
@@ -649,7 +814,7 @@ mod tests {
         let repo = tx.commit("rebase").block_on().expect("tx");
 
         // Diff is still just "add feat.txt" → not stale.
-        assert!(check_staleness(&repo, rebased.id())
+        assert!(check_staleness(&repo, rebased.id(), &no_acks())
             .expect("check_staleness")
             .is_none());
     }
@@ -701,7 +866,7 @@ mod tests {
 
         // The remaining commit's diff is "add a.txt", and its description
         // was set in the same operation. Not stale.
-        assert!(check_staleness(&repo, remaining.id())
+        assert!(check_staleness(&repo, remaining.id(), &no_acks())
             .expect("check_staleness")
             .is_none());
     }
@@ -738,7 +903,7 @@ mod tests {
         let repo = tx.commit("squash").block_on().expect("tx");
 
         // Diff changed (now includes extra.txt) but description wasn't updated.
-        let info = check_staleness(&repo, c2.id())
+        let info = check_staleness(&repo, c2.id(), &no_acks())
             .expect("check_staleness")
             .expect("should be stale");
         assert_eq!(
