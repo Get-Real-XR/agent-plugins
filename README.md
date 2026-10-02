@@ -72,7 +72,7 @@ Routes Claude Code worktree isolation through jj workspaces.
 
 Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal, after snapshotting it so no edit is lost. Drop-in replacement for Claude Code's built-in git worktrees.
 
-Workspaces go under `.claude/worktrees/` by default. Set `JJ_WORKTREE_COMPAT_DIR` (for example in the `env` block of Claude Code's settings) to put them elsewhere; a relative path is taken from the default workspace's root, even when the caller is in an added workspace.
+Workspaces go under `.claude/worktrees/` by default. Set `JJ_WORKTREE_COMPAT_DIR` (for example in the `env` block of Claude Code's settings) to put them elsewhere; an absolute path gets a subfolder per repo, and a relative path is taken from the default workspace's root, even when the caller is in an added workspace.
 
 Current Claude Code refuses a worktree that git resolves to an enclosing checkout. A jj workspace in a colocated repo, or anywhere under a git-managed home directory, has no `.git` of its own, so `EnterWorktree` and isolated subagents fail there until jj can give each workspace its own Git worktree. Create workspaces with `jj workspace add` and `cd` into them instead.
 
