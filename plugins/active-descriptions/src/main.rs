@@ -146,7 +146,11 @@ fn acknowledge(revset: &str) -> Result<()> {
     acks.save()?;
     #[allow(clippy::print_stdout)]
     {
-        println!("Acknowledged {} change(s): {}", acknowledged.len(), acknowledged.join(", "));
+        println!(
+            "Acknowledged {} change(s): {}",
+            acknowledged.len(),
+            acknowledged.join(", ")
+        );
     }
     Ok(())
 }
@@ -218,7 +222,14 @@ fn fingerprint_hash(fingerprint: &Fingerprint) -> String {
 /// Runs `jj log` to evaluate the given revset and return full hex commit IDs.
 fn gather_candidates(revset: &str) -> Result<Vec<String>> {
     let output = Command::new("jj")
-        .args(["log", "-r", revset, "--no-graph", "-T", r#"commit_id ++ "\n""#])
+        .args([
+            "log",
+            "-r",
+            revset,
+            "--no-graph",
+            "-T",
+            r#"commit_id ++ "\n""#,
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
@@ -516,12 +527,8 @@ fn spill_to_tempfile(change_id_short: &str, detail: &str) -> Result<PathBuf> {
         .keep()
         .map_err(|e| anyhow::anyhow!("failed to persist tempfile: {e}"))?;
 
-    fs::write(&path, detail).with_context(|| {
-        format!(
-            "failed to write staleness detail to {}",
-            path.display()
-        )
-    })?;
+    fs::write(&path, detail)
+        .with_context(|| format!("failed to write staleness detail to {}", path.display()))?;
 
     Ok(path)
 }
@@ -533,16 +540,12 @@ mod tests {
     use testutils::{TestRepo, create_tree};
 
     /// Helper: create a tree with the given file contents.
-    fn tree(
-        repo: &Arc<ReadonlyRepo>,
-        files: &[(&str, &str)],
-    ) -> jj_lib::merged_tree::MergedTree {
+    fn tree(repo: &Arc<ReadonlyRepo>, files: &[(&str, &str)]) -> jj_lib::merged_tree::MergedTree {
         let path_contents: Vec<_> = files
             .iter()
             .map(|(p, c)| {
                 (
-                    jj_lib::repo_path::RepoPath::from_internal_string(p)
-                        .expect("valid path"),
+                    jj_lib::repo_path::RepoPath::from_internal_string(p).expect("valid path"),
                     *c,
                 )
             })
@@ -583,9 +586,11 @@ mod tests {
             .expect("write commit");
         let repo = tx.commit("create").block_on().expect("commit tx");
 
-        assert!(check_staleness(&repo, commit.id(), &no_acks())
-            .expect("check_staleness")
-            .is_some());
+        assert!(
+            check_staleness(&repo, commit.id(), &no_acks())
+                .expect("check_staleness")
+                .is_some()
+        );
     }
 
     #[test]
@@ -604,9 +609,11 @@ mod tests {
             .expect("write commit");
         let repo = tx.commit("create").block_on().expect("commit tx");
 
-        assert!(check_staleness(&repo, commit.id(), &no_acks())
-            .expect("check_staleness")
-            .is_none());
+        assert!(
+            check_staleness(&repo, commit.id(), &no_acks())
+                .expect("check_staleness")
+                .is_none()
+        );
     }
 
     #[test]
@@ -619,7 +626,10 @@ mod tests {
         let mut tx = repo.start_transaction();
         let c1 = tx
             .repo_mut()
-            .new_commit(vec![repo.store().root_commit_id().clone()], tree(repo, &[("file.txt", "v1")]))
+            .new_commit(
+                vec![repo.store().root_commit_id().clone()],
+                tree(repo, &[("file.txt", "v1")]),
+            )
             .set_description("feat: initial")
             .write()
             .block_on()
@@ -633,16 +643,26 @@ mod tests {
             .write()
             .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("fix").block_on().expect("tx");
 
         // Acknowledging the current diff clears it, across a save and reload.
         let mut acks = Acks::load(dir.path()).expect("load");
         let change_id = c2.change_id().to_string();
-        acks.record(&change_id, &commit_diff_fingerprint(&repo, &c2).expect("fingerprint"));
+        acks.record(
+            &change_id,
+            &commit_diff_fingerprint(&repo, &c2).expect("fingerprint"),
+        );
         acks.save().expect("save");
         let acks = Acks::load(dir.path()).expect("reload");
-        assert!(check_staleness(&repo, c2.id(), &acks).expect("check").is_none());
+        assert!(
+            check_staleness(&repo, c2.id(), &acks)
+                .expect("check")
+                .is_none()
+        );
 
         // A later content change is stale again.
         let mut tx = repo.start_transaction();
@@ -653,9 +673,16 @@ mod tests {
             .write()
             .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("edit").block_on().expect("tx");
-        assert!(check_staleness(&repo, c3.id(), &acks).expect("check").is_some());
+        assert!(
+            check_staleness(&repo, c3.id(), &acks)
+                .expect("check")
+                .is_some()
+        );
     }
 
     fn no_acks() -> Acks {
@@ -692,14 +719,20 @@ mod tests {
             .write()
             .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("edit").block_on().expect("tx");
 
         let info = check_staleness(&repo, c2.id(), &no_acks())
             .expect("check_staleness")
             .expect("should be stale");
         assert_eq!(
-            info.changed_files.iter().map(|f| f.as_internal_file_string().to_owned()).collect::<Vec<_>>(),
+            info.changed_files
+                .iter()
+                .map(|f| f.as_internal_file_string().to_owned())
+                .collect::<Vec<_>>(),
             vec!["file.txt"],
         );
     }
@@ -731,7 +764,10 @@ mod tests {
             .write()
             .block_on()
             .expect("rewrite");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("edit content").block_on().expect("tx");
 
         // Update description to match.
@@ -743,12 +779,17 @@ mod tests {
             .write()
             .block_on()
             .expect("describe");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("describe").block_on().expect("tx");
 
-        assert!(check_staleness(&repo, c3.id(), &no_acks())
-            .expect("check_staleness")
-            .is_none());
+        assert!(
+            check_staleness(&repo, c3.id(), &no_acks())
+                .expect("check_staleness")
+                .is_none()
+        );
     }
 
     #[test]
@@ -782,8 +823,7 @@ mod tests {
         let repo = tx.commit("create child").block_on().expect("tx");
 
         // Simulate rebase: change parent but keep same diff (feat.txt added).
-        let new_parent_tree =
-            tree(&repo, &[("base.txt", "base"), ("other.txt", "other")]);
+        let new_parent_tree = tree(&repo, &[("base.txt", "base"), ("other.txt", "other")]);
         let mut tx = repo.start_transaction();
         let new_parent = tx
             .repo_mut()
@@ -810,13 +850,18 @@ mod tests {
             .write()
             .block_on()
             .expect("rebase");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("rebase").block_on().expect("tx");
 
         // Diff is still just "add feat.txt" → not stale.
-        assert!(check_staleness(&repo, rebased.id(), &no_acks())
-            .expect("check_staleness")
-            .is_none());
+        assert!(
+            check_staleness(&repo, rebased.id(), &no_acks())
+                .expect("check_staleness")
+                .is_none()
+        );
     }
 
     #[test]
@@ -850,8 +895,7 @@ mod tests {
             .expect("write first");
 
         // Remaining commit: reparented, full tree includes parent's b.txt.
-        let remaining_tree =
-            tree(tx.repo().base_repo(), &[("a.txt", "aaa"), ("b.txt", "bbb")]);
+        let remaining_tree = tree(tx.repo().base_repo(), &[("a.txt", "aaa"), ("b.txt", "bbb")]);
         let remaining = tx
             .repo_mut()
             .rewrite_commit(&original)
@@ -861,14 +905,19 @@ mod tests {
             .write()
             .block_on()
             .expect("write remaining");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("split").block_on().expect("tx");
 
         // The remaining commit's diff is "add a.txt", and its description
         // was set in the same operation. Not stale.
-        assert!(check_staleness(&repo, remaining.id(), &no_acks())
-            .expect("check_staleness")
-            .is_none());
+        assert!(
+            check_staleness(&repo, remaining.id(), &no_acks())
+                .expect("check_staleness")
+                .is_none()
+        );
     }
 
     #[test]
@@ -890,7 +939,10 @@ mod tests {
         let repo = tx.commit("create").block_on().expect("tx");
 
         // Squash new content in without updating description.
-        let t2 = tree(&repo, &[("original.txt", "content"), ("extra.txt", "extra")]);
+        let t2 = tree(
+            &repo,
+            &[("original.txt", "content"), ("extra.txt", "extra")],
+        );
         let mut tx = repo.start_transaction();
         let c2 = tx
             .repo_mut()
@@ -899,7 +951,10 @@ mod tests {
             .write()
             .block_on()
             .expect("squash");
-        tx.repo_mut().rebase_descendants().block_on().expect("rebase descendants");
+        tx.repo_mut()
+            .rebase_descendants()
+            .block_on()
+            .expect("rebase descendants");
         let repo = tx.commit("squash").block_on().expect("tx");
 
         // Diff changed (now includes extra.txt) but description wasn't updated.
@@ -907,7 +962,10 @@ mod tests {
             .expect("check_staleness")
             .expect("should be stale");
         assert_eq!(
-            info.changed_files.iter().map(|f| f.as_internal_file_string().to_owned()).collect::<Vec<_>>(),
+            info.changed_files
+                .iter()
+                .map(|f| f.as_internal_file_string().to_owned())
+                .collect::<Vec<_>>(),
             vec!["extra.txt"],
         );
     }
