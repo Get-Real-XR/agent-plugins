@@ -20,8 +20,10 @@
   (e.g., from concurrent edits), jj marks them as divergent (`??` in logs).
   Resolve by abandoning duplicates or merging.
 - **Operations are logged and undoable.** Every command is an operation in a
-  DAG with full repo state snapshots. `jj op log` to inspect, `jj op undo` to
-  rewind, `jj op restore` to jump to any prior state.
+  DAG with full repo state snapshots; `jj op log` lists them. The log is shared
+  by every workspace of the repo, so `jj undo` and `jj op restore` roll back
+  whatever ran last anywhere, including another agent's work. Where others
+  work, undo only your own operation with `jj op revert OP`.
 
 ## First-Time Setup
 
@@ -52,17 +54,19 @@ jj config set --user ui.editor "your-editor"      # vim, code --wait, etc.
 | Rebase single rev               | `jj rebase --revision REV --destination DEST`       | `git rebase`                |
 | Rebase branch                   | `jj rebase --branch REV --destination DEST`         | `git rebase`                |
 | Abandon (discard) a change      | `jj abandon`                                        | (no equivalent)             |
-| Revert a change (inverse commit)| `jj revert --revision REV`                          | `git revert`                |
+| Revert a change (inverse commit)| `jj revert --revision REV --onto @`                 | `git revert`                |
 | Restore file from another rev   | `jj restore --from REV path`                        | `git checkout REV -- path`  |
 | Resolve conflicts interactively | `jj resolve`                                        | (manual editing)            |
-| Undo last operation             | `jj op undo`                                        | (no equivalent)             |
-| Restore to a prior op state     | `jj op restore OP`                                  | (no equivalent)             |
-| Revert a specific operation     | `jj op revert OP`                                   | (no equivalent)             |
+| Revert one operation            | `jj op revert OP`                                   | (no equivalent)             |
+| Undo last op, anyone's          | `jj undo` (only when you work alone)                | (no equivalent)             |
+| Return to a prior op state      | `jj op restore OP` (only when you work alone)       | (no equivalent)             |
 | Find bug by bisection           | `jj bisect`                                         | `git bisect`                |
 
 ## Bookmark Operations
 
 ```bash
+jj bookmark create NAME                        # create at current change
+jj bookmark create NAME --revision REV         # create at specific revision
 jj bookmark set NAME                           # create or move to current change
 jj bookmark set NAME --revision REV            # create or move to specific revision
 jj bookmark delete NAME                        # delete locally
@@ -79,8 +83,8 @@ Key differences from Git:
 ## Git Interop
 
 ```bash
-jj git clone URL [DIR]                         # clone (--colocated for git+jj)
-jj git push                                    # push all tracked bookmarks
+jj git clone URL [DIR]                         # clone; colocated (.git + .jj) by default, --no-colocate for jj only
+jj git push                                    # push tracked bookmarks in remote_bookmarks()..@
 jj git push --bookmark NAME                    # push specific bookmark
 jj git push --change CHANGE                    # auto-create push-<id> bookmark and push
 jj git fetch                                   # fetch from all remotes
@@ -125,19 +129,23 @@ interchangeably on the same repo. Safe for gradual adoption.
 | `parents(x)`          | parents of x                                     |
 | `children(x)`         | children of x                                    |
 | `fork_point(x)`       | common ancestor(s)                               |
-| `description(pat)`    | changes matching description                     |
+| `description(pat)`    | changes whose whole description matches pat      |
 | `author(pat)`         | changes by author                                |
 | `mine()`              | changes by configured user                       |
 | `empty()`             | changes with no diff                             |
 | `conflict()`          | changes with conflicts                           |
 | `divergent()`         | changes with multiple visible commits            |
 | `immutable()`         | changes protected from modification              |
+| `working_copies()`    | every workspace's working-copy change            |
 | `mutable()`           | changes that can be modified                     |
 | `present(x)`          | x if it exists, empty set otherwise (no error)   |
 | `latest(x, count)`    | most recent N revisions from x                   |
 | `files(fileset)`      | changes modifying files matching fileset          |
 
 Pattern syntax: `exact:"..."`, `glob:"..."`, `substring:"..."`, `regex:"..."`.
+A bare pattern is a glob matched against the whole value: `description("fix:")`
+matches only a description that is exactly `fix:`. Use `substring:"fix:"` or
+`"fix:*"` to match part of it.
 
 ## Filesets
 
@@ -188,7 +196,7 @@ When a change doesn't need a PR, advance `main` and push:
 
 ```bash
 jj bookmark set main --revision @-             # advance main to the finished change
-jj git push                                  # pushes all tracked bookmarks
+jj git push --bookmark main                    # push just main
 ```
 
 ### Feature branches via `--change`
@@ -197,11 +205,36 @@ jj git push                                  # pushes all tracked bookmarks
 for quick PRs but leaves bookmarks you must clean up later:
 
 ```bash
-jj bookmark delete push-CHANGEID            # delete locally
-jj git push --deleted                        # delete on remote
+jj bookmark delete push-CHANGEID               # delete locally
+jj git push --bookmark push-CHANGEID           # delete just that one on the remote
 ```
 
+Avoid `jj git push --deleted`: it pushes every bookmark deleted locally,
+including deletions made in other workspaces of the repo.
+
 Prefer named bookmarks (`jj bookmark set`) for anything long-lived.
+
+## Workspaces and Parallel Agents
+
+```bash
+jj workspace add PATH --name NAME              # new working copy on the same parents as yours
+jj workspace list                              # each workspace and its working-copy change
+jj workspace update-stale                      # after another workspace rewrote your working copy
+jj workspace forget NAME && rm -rf PATH        # remove one; forget leaves the files on disk
+```
+
+- Each workspace has its own files and working-copy change (`NAME@` in
+  revsets). Commits, bookmarks and the operation log are shared.
+- jj commands run at the same moment in different workspaces are merged
+  automatically ("Concurrent modification detected, resolving
+  automatically"). Two rewrites of the same change at once make it divergent.
+- Setting `"immutable_heads()" = "builtin_immutable_heads() | (working_copies() ~ @)"`
+  stops one workspace from rewriting a change another is built on.
+- Make a megamerge a working copy (`jj new a@ b@`). A merge left on top of
+  other workspaces' busy working copies gets rebased by each of their
+  concurrent operations, and its divergent copies double every time.
+- Never `jj undo` or `jj op restore` while others work in the repo; use
+  `jj op revert OP` on your own operation.
 
 ## Official Documentation
 
