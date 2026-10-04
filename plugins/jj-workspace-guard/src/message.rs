@@ -95,7 +95,10 @@ impl fmt::Display for Denial {
                     self.reason
                 )?;
                 writeln!(f)?;
-                write!(f, "Project work happens in a jj repo, where every change is recorded; ")?;
+                write!(
+                    f,
+                    "Project work happens in a jj repo, where every change is recorded; "
+                )?;
                 how_to_enter(f)?;
                 writeln!(f)?;
             }
@@ -105,9 +108,18 @@ impl fmt::Display for Denial {
             f,
             "Read, Grep, Glob and other tools that do not edit files are not affected. Allowed \
              in Bash {}:",
-            if outside { "outside a repo" } else { "in default@ without a workspace" }
+            if outside {
+                "outside a repo"
+            } else {
+                "in default@ without a workspace"
+            }
         )?;
-        writeln!(f, "  - {} {}", READ_ONLY.join(" "), UNTRACKED_WRITES.join(" "))?;
+        writeln!(
+            f,
+            "  - {} {}",
+            READ_ONLY.join(" "),
+            UNTRACKED_WRITES.join(" ")
+        )?;
         writeln!(f, "  - shell builtins: {}", SHELL_BUILTINS.join(" "))?;
         let flag_rules: Vec<String> = FORBIDDEN_FLAGS
             .iter()
@@ -130,7 +142,11 @@ impl fmt::Display for Denial {
                 "  - git {} (but not git init or git clone: use jj git init and jj git clone)",
                 GIT_SUBCOMMANDS.join(", ")
             )?;
-            writeln!(f, "  - machine and service tools: {}", OUTSIDE_TOOLS.join(", "))?;
+            writeln!(
+                f,
+                "  - machine and service tools: {}",
+                OUTSIDE_TOOLS.join(", ")
+            )?;
             writeln!(
                 f,
                 "  - pipes, loops, command substitution and output redirects, as long as every \
@@ -150,7 +166,11 @@ impl fmt::Display for Denial {
                 GIT_SUBCOMMANDS.join(", "),
                 GIT_LISTING_SUBCOMMANDS.join(", ")
             )?;
-            writeln!(f, "  - gh {} (api: GET only)", subcommand_list(GH_SUBCOMMANDS))?;
+            writeln!(
+                f,
+                "  - gh {} (api: GET only)",
+                subcommand_list(GH_SUBCOMMANDS)
+            )?;
             writeln!(f, "  - zellij {}", subcommand_list(ZELLIJ_SUBCOMMANDS))?;
             writeln!(
                 f,
@@ -165,7 +185,11 @@ impl fmt::Display for Denial {
             "Do not work around this guard, for example through another interpreter, a \
              different path to the same files, or another agent's workspace. If the task truly \
              needs {}, stop and ask the user.",
-            if outside { "a file outside any repo" } else { "a change in default@ itself" }
+            if outside {
+                "a file outside any repo"
+            } else {
+                "a change in default@ itself"
+            }
         )
     }
 }
@@ -195,7 +219,10 @@ fn how_to_leave(f: &mut fmt::Formatter<'_>, root: &Path) -> fmt::Result {
         "  2. `cd {workspace}`. The Bash tool keeps that directory for later calls, and \
          commands run there are not restricted."
     )?;
-    writeln!(f, "  3. Edit and Write files by absolute path under {workspace}/.")
+    writeln!(
+        f,
+        "  3. Edit and Write files by absolute path under {workspace}/."
+    )
 }
 
 fn how_to_enter(f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -231,12 +258,22 @@ mod tests {
 
     #[test]
     fn notice() {
-        insta::assert_snapshot!(Notice { zone: Zone::Default(root()) }.to_string());
+        insta::assert_snapshot!(
+            Notice {
+                zone: Zone::Default(root())
+            }
+            .to_string()
+        );
     }
 
     #[test]
     fn notice_outside() {
-        insta::assert_snapshot!(Notice { zone: Zone::Outside }.to_string());
+        insta::assert_snapshot!(
+            Notice {
+                zone: Zone::Outside
+            }
+            .to_string()
+        );
     }
 
     #[test]

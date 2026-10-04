@@ -265,7 +265,10 @@ pub fn check_outside(name: &str, args: &[Arg], cwd: Option<&Path>) -> Result<(),
     match name {
         "jj" => {
             let positionals = positionals(args, JJ_VALUE_FLAGS);
-            if matches!(positionals.as_slice(), [Some("git"), Some("init" | "clone"), ..]) {
+            if matches!(
+                positionals.as_slice(),
+                [Some("git"), Some("init" | "clone"), ..]
+            ) {
                 Ok(())
             } else {
                 jj(args, cwd)

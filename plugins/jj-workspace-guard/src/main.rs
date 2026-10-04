@@ -164,7 +164,10 @@ mod tests {
             else {
                 panic!("{event} did not parse as a start event");
             };
-            assert_eq!(notice(&started).unwrap().zone, Zone::Default(layout.root.clone()));
+            assert_eq!(
+                notice(&started).unwrap().zone,
+                Zone::Default(layout.root.clone())
+            );
         }
     }
 
@@ -186,8 +189,12 @@ mod tests {
 
     #[rstest]
     fn edits_outside_any_repo_are_denied_except_scratch(layout: Layout) {
-        let denial = check(&input(&layout, "Write", json!({ "file_path": "/srv/guard-probe/notes.md" })))
-            .unwrap();
+        let denial = check(&input(
+            &layout,
+            "Write",
+            json!({ "file_path": "/srv/guard-probe/notes.md" }),
+        ))
+        .unwrap();
         assert_eq!(denial.zone, Zone::Outside);
         let scratch = json!({ "file_path": layout.outside.join("notes.md") });
         assert!(check(&input(&layout, "Write", scratch)).is_none());

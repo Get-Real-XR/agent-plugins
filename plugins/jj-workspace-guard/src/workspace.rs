@@ -67,7 +67,9 @@ fn guarded(root: &Path) -> bool {
             .arg(root)
             .args(["config", "get", "jj-workspace-guard.enabled"])
             .output()
-            .map_or(true, |output| String::from_utf8_lossy(&output.stdout).trim() != "false")
+            .map_or(true, |output| {
+                String::from_utf8_lossy(&output.stdout).trim() != "false"
+            })
     })
 }
 
@@ -120,7 +122,11 @@ fn is_temporary(path: &Path) -> bool {
 fn is_claude_memory(path: &Path, home: &Path) -> bool {
     resolve_existing_prefix(path)
         .strip_prefix(resolve_existing_prefix(&home.join(".claude/projects")))
-        .is_ok_and(|rest| rest.components().nth(1).is_some_and(|dir| dir.as_os_str() == "memory"))
+        .is_ok_and(|rest| {
+            rest.components()
+                .nth(1)
+                .is_some_and(|dir| dir.as_os_str() == "memory")
+        })
 }
 
 /// Joins `path` onto `base` and removes `.` and `..` components lexically.
@@ -165,9 +171,18 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
         let projects = home.join(".claude/projects");
-        assert!(is_claude_memory(&projects.join("-home-dev-repo/memory/note.md"), home));
-        assert!(is_claude_memory(&projects.join("-home-dev-repo/memory/MEMORY.md"), home));
-        assert!(!is_claude_memory(&projects.join("-home-dev-repo/transcript.jsonl"), home));
+        assert!(is_claude_memory(
+            &projects.join("-home-dev-repo/memory/note.md"),
+            home
+        ));
+        assert!(is_claude_memory(
+            &projects.join("-home-dev-repo/memory/MEMORY.md"),
+            home
+        ));
+        assert!(!is_claude_memory(
+            &projects.join("-home-dev-repo/transcript.jsonl"),
+            home
+        ));
         assert!(!is_claude_memory(&home.join(".claude/settings.json"), home));
         assert!(!is_claude_memory(&home.join("repo/memory/note.md"), home));
     }
@@ -189,10 +204,25 @@ pub(crate) mod tests {
         jj(&guarded, &["git", "init", "."]);
         let opted_out = base.join("dotfiles");
         jj(&opted_out, &["git", "init", "."]);
-        jj(&opted_out, &["config", "set", "--repo", "jj-workspace-guard.enabled", "false"]);
+        jj(
+            &opted_out,
+            &[
+                "config",
+                "set",
+                "--repo",
+                "jj-workspace-guard.enabled",
+                "false",
+            ],
+        );
 
-        assert_eq!(default_workspace_root(&guarded.join("src/main.rs")), Some(guarded));
-        assert_eq!(default_workspace_root(&opted_out.join("nu/config.nu")), None);
+        assert_eq!(
+            default_workspace_root(&guarded.join("src/main.rs")),
+            Some(guarded)
+        );
+        assert_eq!(
+            default_workspace_root(&opted_out.join("nu/config.nu")),
+            None
+        );
     }
 
     /// A default workspace at `root`, an added workspace nested at
@@ -257,9 +287,18 @@ pub(crate) mod tests {
         let info = layout.root.join(".git/info");
         std::fs::create_dir_all(&info).unwrap();
         assert_eq!(write_zone(&info.join("exclude")), Zone::Free);
-        assert_eq!(write_zone(&layout.root.join(".jj/repo/store/git/info/exclude")), Zone::Free);
-        assert_eq!(write_zone(&info.join("attributes")), Zone::Default(layout.root.clone()));
-        assert_eq!(write_zone(&layout.root.join("src/lib.rs")), Zone::Default(layout.root));
+        assert_eq!(
+            write_zone(&layout.root.join(".jj/repo/store/git/info/exclude")),
+            Zone::Free
+        );
+        assert_eq!(
+            write_zone(&info.join("attributes")),
+            Zone::Default(layout.root.clone())
+        );
+        assert_eq!(
+            write_zone(&layout.root.join("src/lib.rs")),
+            Zone::Default(layout.root)
+        );
     }
 
     #[cfg(unix)]
