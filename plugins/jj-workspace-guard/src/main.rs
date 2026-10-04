@@ -25,7 +25,8 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::message::{Denial, ReadOnlyNotice};
+use crate::message::{Denial, Notice};
+use crate::workspace::Zone;
 
 /// The parts of the hook input the guard reads, by event.
 #[derive(Debug, Deserialize)]
@@ -65,7 +66,7 @@ fn main() -> anyhow::Result<()> {
         .read_to_string(&mut raw)
         .context("read the hook input")?;
     let input: HookInput = serde_json::from_str(&raw).context("parse the hook input")?;
-    let context = |event: &str, notice: ReadOnlyNotice| json!({ "hookSpecificOutput": { "hookEventName": event, "additionalContext": notice.to_string() } });
+    let context = |event: &str, notice: Notice| json!({ "hookSpecificOutput": { "hookEventName": event, "additionalContext": notice.to_string() } });
     let output = match input {
         HookInput::PreToolUse(call) => check(&call).map(|denial| {
             json!({
@@ -92,9 +93,11 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn notice(start: &Start) -> Option<ReadOnlyNotice> {
-    let default_root = workspace::default_workspace_root(&start.cwd)?;
-    Some(ReadOnlyNotice { default_root })
+fn notice(start: &Start) -> Option<Notice> {
+    match workspace::zone(&start.cwd) {
+        Zone::Free => None,
+        zone => Some(Notice { zone }),
+    }
 }
 
 fn check(input: &ToolCall) -> Option<Denial> {
@@ -107,11 +110,13 @@ fn check(input: &ToolCall) -> Option<Denial> {
                 .as_ref()
                 .or(input.tool_input.notebook_path.as_ref())?;
             let target = workspace::absolutize(&input.cwd, target);
-            let default_root = workspace::default_workspace_written(&target)?;
-            Some(Denial {
-                reason: format!("{} would modify {}", input.tool_name, target.display()),
-                default_root,
-            })
+            match workspace::write_zone(&target) {
+                Zone::Free => None,
+                zone => Some(Denial {
+                    reason: format!("{} would modify {}", input.tool_name, target.display()),
+                    zone,
+                }),
+            }
         }
         _ => None,
     }
@@ -123,6 +128,7 @@ mod tests {
     use serde_json::json;
 
     use super::{HookInput, ToolCall, check, notice};
+    use crate::workspace::Zone;
     use crate::workspace::tests::{Layout, layout};
 
     fn input(layout: &Layout, tool_name: &str, tool_input: serde_json::Value) -> ToolCall {
@@ -158,18 +164,33 @@ mod tests {
             else {
                 panic!("{event} did not parse as a start event");
             };
-            assert_eq!(notice(&started).unwrap().default_root, layout.root);
+            assert_eq!(notice(&started).unwrap().zone, Zone::Default(layout.root.clone()));
         }
     }
 
     #[rstest]
-    fn agents_starting_elsewhere_are_told_nothing(layout: Layout) {
-        for cwd in [&layout.added, &layout.outside] {
-            let HookInput::SessionStart(started) = start("SessionStart", cwd) else {
-                panic!("SessionStart did not parse");
-            };
-            assert!(notice(&started).is_none());
-        }
+    fn agents_in_an_added_workspace_are_told_nothing(layout: Layout) {
+        let HookInput::SessionStart(started) = start("SessionStart", &layout.added) else {
+            panic!("SessionStart did not parse");
+        };
+        assert!(notice(&started).is_none());
+    }
+
+    #[rstest]
+    fn agents_outside_any_repo_are_told_how_to_get_into_one(layout: Layout) {
+        let HookInput::SessionStart(started) = start("SessionStart", &layout.outside) else {
+            panic!("SessionStart did not parse");
+        };
+        assert_eq!(notice(&started).unwrap().zone, Zone::Outside);
+    }
+
+    #[rstest]
+    fn edits_outside_any_repo_are_denied_except_scratch(layout: Layout) {
+        let denial = check(&input(&layout, "Write", json!({ "file_path": "/srv/guard-probe/notes.md" })))
+            .unwrap();
+        assert_eq!(denial.zone, Zone::Outside);
+        let scratch = json!({ "file_path": layout.outside.join("notes.md") });
+        assert!(check(&input(&layout, "Write", scratch)).is_none());
     }
 
     #[rstest]
@@ -182,7 +203,7 @@ mod tests {
         let file = layout.root.join("src/main.rs");
         for tool in ["Edit", "Write", "MultiEdit"] {
             let denial = check(&input(&layout, tool, json!({ "file_path": file }))).unwrap();
-            assert_eq!(denial.default_root, layout.root);
+            assert_eq!(denial.zone, Zone::Default(layout.root.clone()));
         }
         let notebook = json!({ "notebook_path": layout.root.join("analysis.ipynb") });
         assert!(check(&input(&layout, "NotebookEdit", notebook)).is_some());

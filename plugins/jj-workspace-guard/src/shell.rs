@@ -1,4 +1,6 @@
-//! Deciding whether a Bash command stays read-only in the default workspace.
+//! Deciding whether a Bash command is allowed where it runs: read-only in a
+//! default workspace, and read-only plus making a repo and machine tools
+//! outside any repo.
 //!
 //! The command is parsed into a bash syntax tree and every simple command in
 //! it, including those inside substitutions, loops and subshells, is checked
@@ -18,15 +20,15 @@ use brush_parser::word::{TildeExpr, WordPiece, WordPieceWithSource};
 
 use crate::commands::{self, Arg};
 use crate::message::Denial;
-use crate::workspace;
+use crate::workspace::{self, Zone};
 
-/// Checks `command` run from `cwd`, returning a denial if any part of it could
-/// write inside a default jj workspace.
+/// Checks `command` run from `cwd`, returning a denial if any part of it is
+/// not allowed where it runs or writes.
 pub fn check(command: &str, cwd: &Path) -> Result<(), Denial> {
     let mut checker = Checker {
         options: ParserOptions::default(),
         cwd: Some(cwd.to_path_buf()),
-        starting_root: workspace::default_workspace_root(cwd),
+        starting_zone: workspace::zone(cwd),
     };
     checker.program(command, "the command")
 }
@@ -35,28 +37,28 @@ struct Checker {
     options: ParserOptions,
     /// Where the next command runs, or `None` once a `cd` made that unknowable.
     cwd: Option<PathBuf>,
-    /// The default workspace the command started in, if any. When `cwd` is
-    /// unknown the command is judged as if it were still there.
-    starting_root: Option<PathBuf>,
+    /// The zone the command started in. When `cwd` is unknown the command is
+    /// judged as if it were still there.
+    starting_zone: Zone,
 }
 
 impl Checker {
-    /// The default workspace the next command runs in, if any.
-    fn default_root(&self) -> Option<PathBuf> {
+    /// The zone the next command runs in.
+    fn zone(&self) -> Zone {
         match &self.cwd {
-            Some(cwd) => workspace::default_workspace_root(cwd),
-            None => self.starting_root.clone(),
+            Some(cwd) => workspace::zone(cwd),
+            None => self.starting_zone.clone(),
         }
     }
 
-    /// Blocks the construct being checked if it runs in a default workspace.
+    /// Blocks the construct being checked unless it runs in a free zone.
     fn refuse(&self, reason: impl Into<String>) -> Result<(), Denial> {
-        match self.default_root() {
-            Some(default_root) => Err(Denial {
+        match self.zone() {
+            Zone::Free => Ok(()),
+            zone => Err(Denial {
                 reason: reason.into(),
-                default_root,
+                zone,
             }),
-            None => Ok(()),
         }
     }
 
@@ -267,7 +269,8 @@ impl Checker {
             }
         }
 
-        if self.default_root().is_some() {
+        let zone = self.zone();
+        if zone != Zone::Free {
             let Some(name) = name.as_deref() else {
                 return self.refuse(format!(
                     "the command name `{}` is not a literal word",
@@ -277,11 +280,16 @@ impl Checker {
                         .map_or("", |word| word.value.as_str())
                 ));
             };
-            if let Err(reason) = commands::check(name, &args, self.cwd.as_deref()) {
+            let checked = if zone == Zone::Outside {
+                commands::check_outside(name, &args, self.cwd.as_deref())
+            } else {
+                commands::check(name, &args, self.cwd.as_deref())
+            };
+            if let Err(reason) = checked {
                 return self.refuse(reason);
             }
         }
-        // Follow `cd` even outside default@: it may lead into it.
+        // Follow `cd` wherever it starts: it may lead into a restricted zone.
         if name.as_deref() == Some("cd") {
             self.cd(&args);
         }
@@ -370,12 +378,12 @@ impl Checker {
                 ));
             }
         };
-        match workspace::default_workspace_written(&path) {
-            Some(default_root) => Err(Denial {
+        match workspace::write_zone(&path) {
+            Zone::Free => Ok(()),
+            zone => Err(Denial {
                 reason: format!("the redirect to `{target}` writes {}", path.display()),
-                default_root,
+                zone,
             }),
-            None => Ok(()),
         }
     }
 
@@ -460,6 +468,7 @@ mod tests {
     use rstest::rstest;
 
     use super::check;
+    use crate::workspace::Zone;
     use crate::workspace::tests::{Layout, layout};
 
     fn expand(command: &str, layout: &Layout) -> String {
@@ -542,7 +551,7 @@ mod tests {
     fn denied_in_default(layout: Layout, #[case] command: &str) {
         let command = expand(command, &layout);
         let denial = check(&command, &layout.root).expect_err(&command);
-        assert_eq!(denial.default_root, layout.root, "{command}");
+        assert_eq!(denial.zone, Zone::Default(layout.root.clone()), "{command}");
     }
 
     #[rstest]
@@ -550,9 +559,40 @@ mod tests {
     #[case("sed -i s/a/b/ f.txt")]
     #[case("echo hi > notes.txt")]
     #[case("if [ -f x ]; then")]
-    fn anything_goes_elsewhere(layout: Layout, #[case] command: &str) {
+    fn anything_goes_in_an_added_workspace(layout: Layout, #[case] command: &str) {
         assert_eq!(check(command, &layout.added), Ok(()), "{command}");
-        assert_eq!(check(command, &layout.outside), Ok(()), "{command}");
+    }
+
+    // The layout's outside folder is under the system temporary folder, so
+    // writes there count as scratch; denied writes use a path elsewhere.
+    #[rstest]
+    #[case("ls -la && pwd")]
+    #[case("mkdir -p proj && cd proj && jj git init --colocate")]
+    #[case("jj git init --no-colocate scratch")]
+    #[case("jj git clone --colocate https://github.com/o/r r")]
+    #[case("gpuq queue")]
+    #[case("gh pr view 1 -R o/r --json title")]
+    #[case("aws s3 ls && kubectl get pods -A")]
+    #[case("ssh laptop-ts uname -a")]
+    #[case("echo hi > notes.txt")]
+    #[case("cd {added} && cargo build")]
+    fn allowed_outside_any_repo(layout: Layout, #[case] command: &str) {
+        let command = expand(command, &layout);
+        assert_eq!(check(&command, &layout.outside), Ok(()), "{command}");
+    }
+
+    #[rstest]
+    #[case("cargo build")]
+    #[case("rm -rf target")]
+    #[case("sed -i s/a/b/ f.txt")]
+    #[case("git init")]
+    #[case("git clone https://github.com/o/r")]
+    #[case("python3 script.py")]
+    #[case("echo hi > /srv/guard-probe/notes.txt")]
+    #[case("if [ -f x ]; then")]
+    fn denied_outside_any_repo(layout: Layout, #[case] command: &str) {
+        let denial = check(command, &layout.outside).expect_err(command);
+        assert_eq!(denial.zone, Zone::Outside, "{command}");
     }
 
     #[rstest]
@@ -562,6 +602,6 @@ mod tests {
     fn reaching_into_default_from_elsewhere_is_denied(layout: Layout, #[case] command: &str) {
         let command = expand(command, &layout);
         let denial = check(&command, &layout.added).expect_err(&command);
-        assert_eq!(denial.default_root, layout.root, "{command}");
+        assert_eq!(denial.zone, Zone::Default(layout.root.clone()), "{command}");
     }
 }

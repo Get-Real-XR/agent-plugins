@@ -91,7 +91,9 @@ A `PreToolUse` hook blocks `Edit`, `Write` and `NotebookEdit` on files inside `d
 
 It guards against mistakes, not adversaries: once an agent's shell is in another workspace, the guard does not inspect what its commands touch.
 
-Repos that are not projects, such as a home directory or a dotfiles source tracked with jj, can opt out with `jj config set --repo jj-workspace-guard.enabled false`, run in that repo. Claude Code's memory directories (`~/.claude/projects/*/memory/`) are always writable.
+Outside any jj repo, it keeps project work out of unversioned folders: agents may read and search, use machine and service tools (`aws`, `chezmoi`, `claude`, `gh`, `gpuq`, `kubectl`, `op-agent`, `ssh`, `zellij`), and make or clone a jj repo (`jj git init`, `jj git clone`; plain `git init` and `git clone` are refused). Writes outside a repo go only to temporary folders and Claude's memory. The message points the agent into a repo, and agents starting outside one are told the same up front.
+
+Repos that are not projects, such as a dotfiles source or a scratch repo, can opt out with `jj config set --repo jj-workspace-guard.enabled false`, run in that repo. Claude Code's memory directories (`~/.claude/projects/*/memory/`) are always writable.
 
 ## How the jj plugins work together
 

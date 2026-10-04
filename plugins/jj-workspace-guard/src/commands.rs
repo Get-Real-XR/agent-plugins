@@ -249,6 +249,38 @@ const ZELLIJ_VALUE_FLAGS: &[&str] = &[
     "--layout",
 ];
 
+/// Tools allowed outside any jj repo, whatever their arguments: machine and
+/// service tooling that does not produce project files.
+pub const OUTSIDE_TOOLS: &[&str] = &[
+    "aws", "chezmoi", "claude", "gh", "gpuq", "kubectl", "op-agent", "ssh", "zellij",
+];
+
+/// Checks one simple command run from `cwd` outside any jj repo, returning
+/// why it is not allowed: what is allowed in a default workspace, plus
+/// [`OUTSIDE_TOOLS`] and making or cloning a jj repo.
+pub fn check_outside(name: &str, args: &[Arg], cwd: Option<&Path>) -> Result<(), String> {
+    if OUTSIDE_TOOLS.contains(&name) {
+        return Ok(());
+    }
+    match name {
+        "jj" => {
+            let positionals = positionals(args, JJ_VALUE_FLAGS);
+            if matches!(positionals.as_slice(), [Some("git"), Some("init" | "clone"), ..]) {
+                Ok(())
+            } else {
+                jj(args, cwd)
+            }
+        }
+        "git" => match positionals(args, GIT_VALUE_FLAGS).as_slice() {
+            [Some(subcommand @ ("init" | "clone")), ..] => Err(format!(
+                "`git {subcommand}` makes a plain git repo; use `jj git {subcommand}` instead"
+            )),
+            _ => git(args, cwd),
+        },
+        _ => check(name, args, cwd),
+    }
+}
+
 /// Checks one simple command run from `cwd` in the default workspace,
 /// returning why it is not allowed.
 ///

@@ -1,12 +1,23 @@
-//! Finding which jj workspace a path belongs to.
+//! Finding where a path is: which jj workspace, if any, owns it.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-/// Returns the root of the default jj workspace containing `path`, or `None`
-/// when `path` is in an added workspace or outside any jj repo.
+/// Where a path is, as far as the guard is concerned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Zone {
+    /// Inside the guarded default workspace with this root: read-only for
+    /// agents.
+    Default(PathBuf),
+    /// Outside every jj repo, where project work does not belong.
+    Outside,
+    /// Anywhere else: an added workspace, or a repo that opted out.
+    Free,
+}
+
+/// Returns the zone `path` is in.
 ///
 /// jj keeps the repo store, `.jj/repo/`, in the workspace the repo was created
 /// in, which is `default@`. Every workspace added later holds a `.jj/repo`
@@ -18,13 +29,27 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 /// Symlinks in its longest existing prefix are resolved.
 ///
 /// A repo whose jj repo config sets `jj-workspace-guard.enabled = false` is
-/// never guarded: that is for repos that are not projects, such as a home
-/// directory or a dotfiles source tracked with jj.
-pub fn default_workspace_root(path: &Path) -> Option<PathBuf> {
+/// never guarded: that is for repos that are not projects, such as a
+/// dotfiles source or a scratch repo.
+pub fn zone(path: &Path) -> Zone {
     let resolved = resolve_existing_prefix(path);
-    let workspace_root = resolved.ancestors().find(|dir| dir.join(".jj").is_dir())?;
-    (workspace_root.join(".jj/repo").is_dir() && guarded(workspace_root))
-        .then(|| workspace_root.to_path_buf())
+    let Some(workspace_root) = resolved.ancestors().find(|dir| dir.join(".jj").is_dir()) else {
+        return Zone::Outside;
+    };
+    if workspace_root.join(".jj/repo").is_dir() && guarded(workspace_root) {
+        Zone::Default(workspace_root.to_path_buf())
+    } else {
+        Zone::Free
+    }
+}
+
+/// Returns the root of the guarded default workspace containing `path`, if
+/// any.
+pub fn default_workspace_root(path: &Path) -> Option<PathBuf> {
+    match zone(path) {
+        Zone::Default(root) => Some(root),
+        Zone::Outside | Zone::Free => None,
+    }
 }
 
 /// Whether the repo at `root` has not opted out of the guard. Asks jj, so
@@ -46,22 +71,49 @@ fn guarded(root: &Path) -> bool {
     })
 }
 
-/// Returns the root of the default jj workspace that writing `path` would
-/// change, or `None` if the write is allowed.
+/// Returns the zone a write to `path` lands in, counting allowed writes as
+/// [`Zone::Free`].
 ///
-/// That is [`default_workspace_root`], with two exceptions. The repo's git
-/// exclude file is local, untracked configuration, and an agent in default@
-/// needs to exclude the `workspaces/` directory it is about to create.
-/// Claude Code's per-project memory directory is where Claude Code tells
-/// agents to write, wherever they work.
-pub fn default_workspace_written(path: &Path) -> Option<PathBuf> {
+/// That is [`zone`], with three exceptions:
+/// - Claude Code's per-project memory directory is where Claude Code tells
+///   agents to write, wherever they work.
+/// - Outside every repo, temporary folders (including Claude's session
+///   scratchpad) hold throwaway files, not project work. A repo that happens
+///   to live in one keeps its own rules.
+/// - In a default workspace, the repo's git exclude file is local, untracked
+///   configuration, and an agent there needs to exclude the `workspaces/`
+///   directory it is about to create.
+pub fn write_zone(path: &Path) -> Zone {
     if std::env::var_os("HOME").is_some_and(|home| is_claude_memory(path, Path::new(&home))) {
-        return None;
+        return Zone::Free;
     }
-    let root = default_workspace_root(path)?;
+    match zone(path) {
+        Zone::Outside if is_temporary(path) || path.starts_with("/dev") => Zone::Free,
+        Zone::Default(root) => {
+            let resolved = resolve_existing_prefix(path);
+            let exclude_files = [".git/info/exclude", ".jj/repo/store/git/info/exclude"];
+            if exclude_files.iter().any(|file| resolved == root.join(file)) {
+                Zone::Free
+            } else {
+                Zone::Default(root)
+            }
+        }
+        other => other,
+    }
+}
+
+/// Whether `path` is in a system temporary folder.
+fn is_temporary(path: &Path) -> bool {
     let resolved = resolve_existing_prefix(path);
-    let exclude_files = [".git/info/exclude", ".jj/repo/store/git/info/exclude"];
-    (!exclude_files.iter().any(|file| resolved == root.join(file))).then_some(root)
+    let mut temporary = vec![
+        PathBuf::from("/tmp"),
+        PathBuf::from("/var/tmp"),
+        PathBuf::from("/private/tmp"),
+        PathBuf::from("/private/var/tmp"),
+        resolve_existing_prefix(&std::env::temp_dir()),
+    ];
+    temporary.dedup();
+    temporary.iter().any(|dir| resolved.starts_with(dir))
 }
 
 /// Whether `path` is inside `<home>/.claude/projects/<project>/memory/`.
@@ -106,7 +158,7 @@ pub(crate) mod tests {
     use rstest::{fixture, rstest};
     use tempfile::TempDir;
 
-    use super::{absolutize, default_workspace_root, default_workspace_written, is_claude_memory};
+    use super::{Zone, absolutize, default_workspace_root, is_claude_memory, write_zone};
 
     #[test]
     fn claude_memory_is_recognised_and_nothing_else_under_claude() {
@@ -204,19 +256,10 @@ pub(crate) mod tests {
     fn git_exclude_file_is_writable_but_not_the_rest_of_git(layout: Layout) {
         let info = layout.root.join(".git/info");
         std::fs::create_dir_all(&info).unwrap();
-        assert_eq!(default_workspace_written(&info.join("exclude")), None);
-        assert_eq!(
-            default_workspace_written(&layout.root.join(".jj/repo/store/git/info/exclude")),
-            None
-        );
-        assert_eq!(
-            default_workspace_written(&info.join("attributes")),
-            Some(layout.root.clone())
-        );
-        assert_eq!(
-            default_workspace_written(&layout.root.join("src/lib.rs")),
-            Some(layout.root)
-        );
+        assert_eq!(write_zone(&info.join("exclude")), Zone::Free);
+        assert_eq!(write_zone(&layout.root.join(".jj/repo/store/git/info/exclude")), Zone::Free);
+        assert_eq!(write_zone(&info.join("attributes")), Zone::Default(layout.root.clone()));
+        assert_eq!(write_zone(&layout.root.join("src/lib.rs")), Zone::Default(layout.root));
     }
 
     #[cfg(unix)]
