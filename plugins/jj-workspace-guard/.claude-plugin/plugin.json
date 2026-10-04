@@ -1,6 +1,6 @@
 {
   "name": "jj-workspace-guard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Keeps agents read-only in the default jj workspace so they make changes in their own workspaces",
   "author": { "name": "henry-merrilees" }
 }
