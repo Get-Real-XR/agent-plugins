@@ -70,7 +70,7 @@ Routes Claude Code worktree isolation through jj workspaces.
 | **Install** | `claude plugin install jj-worktree-compat@agent-plugins` |
 | **Requires** | jj |
 
-Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal, after snapshotting it so no edit is lost. Drop-in replacement for Claude Code's built-in git worktrees.
+Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal, after snapshotting it so no edit is lost. Drop-in replacement for Claude Code's built-in git worktrees. Like a git worktree made from `HEAD`, the new workspace does not contain your in-progress change; building it on top of that change instead would freeze the change for you wherever other workspaces' working copies are immutable (`working_copies()` in `immutable_heads()`). `plugins/jj-worktree-compat/tests/create-keeps-caller-mutable.sh` checks this.
 
 Workspaces go under `.claude/worktrees/` by default. Set `JJ_WORKTREE_COMPAT_DIR` (for example in the `env` block of Claude Code's settings) to put them elsewhere; an absolute path gets a subfolder per repo, and a relative path is taken from the default workspace's root, even when the caller is in an added workspace.
 

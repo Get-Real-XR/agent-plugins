@@ -49,8 +49,12 @@ mkdir -p "$worktree_base"
 # very "agent landed in the parent cwd" fallback this hook exists to prevent.
 # jj resolves concurrent `jj workspace add` operations via op-log merge, so
 # parallel creates are safe; a short retry loop covers rare op-log contention.
+# Without `-r`, jj puts the new working copy on the same parents as the
+# caller's. `-r @` would put it on top of the caller's working copy, which the
+# caller then cannot rewrite: other workspaces' working copies are immutable
+# under a common `immutable_heads()` setting, and so are their ancestors.
 add_workspace() {
-  (cd "$repo_root" && jj workspace add "$dest" --name "$name" -r @) 2>&1
+  (cd "$repo_root" && jj workspace add "$dest" --name "$name") 2>&1
 }
 
 err=""
