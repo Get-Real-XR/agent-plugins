@@ -7,6 +7,42 @@ description: >
 
 # Conventional Commits 1.0.0
 
+## Quick reference
+
+```
+<type>[optional scope][!]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+Types:
+
+- `feat` — new feature
+- `fix` — bug fix
+- `docs` — documentation only
+- `style` — formatting, no code change
+- `refactor` — neither fixes nor adds functionality
+- `perf` — performance improvement
+- `test` — adding or fixing tests
+- `build` — build system or dependencies
+- `ci` — CI configuration
+- `chore` — other changes that don't modify src or test files
+
+Rules:
+
+1. The type is required. `feat` and `fix` trigger version bumps.
+2. The scope is optional, in parentheses: `fix(parser): handle edge case`.
+3. `!` after the type or scope marks a breaking change: `feat(api)!: new auth flow`.
+4. Description: imperative mood, lowercase, no period.
+5. Body: one blank line after the description; free-form, explains *why*.
+6. Footers: one blank line after the body, `Token: value` or `Token #value`
+   (`BREAKING CHANGE: description`, `Reviewed-by: name`, `Refs: #123`).
+7. A breaking change is marked with `!`, a `BREAKING CHANGE:` footer, or both.
+
+The full specification follows.
+
 ## Summary
 
 The Conventional Commits specification is a lightweight convention on top of commit messages.
