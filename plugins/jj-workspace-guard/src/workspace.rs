@@ -104,9 +104,75 @@ pub fn write_zone(path: &Path) -> Zone {
     }
 }
 
+/// Whether removing, moving or overwriting `path` loses nothing worth
+/// keeping: it is inside Claude Code's memory directory, or inside a
+/// temporary folder outside every repo with no repo at or under it.
+///
+/// `path` may contain shell patterns (`*`, `?`, `[`, `{`), which stand for
+/// anything under the literal directories before them.
+pub fn is_disposable(path: &Path) -> bool {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    is_disposable_in(path, home.as_deref())
+}
+
+fn is_disposable_in(path: &Path, home: Option<&Path>) -> bool {
+    let is_pattern = |component: &Component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .contains(['*', '?', '[', '{'])
+    };
+    let literal: PathBuf = path.components().take_while(|c| !is_pattern(c)).collect();
+    let pattern = path.strip_prefix(&literal).unwrap_or(path);
+    // `{..,x}` expands to a path above the literal part.
+    if pattern.to_string_lossy().contains("..") {
+        return false;
+    }
+    let resolved = resolve_existing_prefix(&literal);
+    // A pattern matches only below its literal part, so that part may be the
+    // memory or temporary folder itself; a plain path must be inside one.
+    let is_pattern = !pattern.as_os_str().is_empty();
+    let inside = |dir: &Path| resolved.starts_with(dir) && (is_pattern || resolved != dir);
+
+    if let Some(memory) = home.and_then(|home| claude_memory_dir(&resolved, home)) {
+        return inside(&memory);
+    }
+    temporary_dirs().iter().any(|dir| inside(dir))
+        && zone(&resolved) == Zone::Outside
+        && !may_hold_repo(&resolved)
+}
+
+/// Whether a jj or git repo may lie at or under `path`. Symlinks are not
+/// followed; past `SCAN_LIMIT` directories, the answer is yes.
+fn may_hold_repo(path: &Path) -> bool {
+    const SCAN_LIMIT: usize = 10_000;
+    let mut pending = vec![path.to_path_buf()];
+    for _ in 0..SCAN_LIMIT {
+        let Some(dir) = pending.pop() else {
+            return false;
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if matches!(entry.file_name().to_str(), Some(".jj" | ".git")) {
+                return true;
+            }
+            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                pending.push(entry.path());
+            }
+        }
+    }
+    true
+}
+
 /// Whether `path` is in a system temporary folder.
 fn is_temporary(path: &Path) -> bool {
     let resolved = resolve_existing_prefix(path);
+    temporary_dirs().iter().any(|dir| resolved.starts_with(dir))
+}
+
+fn temporary_dirs() -> Vec<PathBuf> {
     let mut temporary = vec![
         PathBuf::from("/tmp"),
         PathBuf::from("/var/tmp"),
@@ -115,18 +181,22 @@ fn is_temporary(path: &Path) -> bool {
         resolve_existing_prefix(&std::env::temp_dir()),
     ];
     temporary.dedup();
-    temporary.iter().any(|dir| resolved.starts_with(dir))
+    temporary
 }
 
 /// Whether `path` is inside `<home>/.claude/projects/<project>/memory/`.
 fn is_claude_memory(path: &Path, home: &Path) -> bool {
-    resolve_existing_prefix(path)
-        .strip_prefix(resolve_existing_prefix(&home.join(".claude/projects")))
-        .is_ok_and(|rest| {
-            rest.components()
-                .nth(1)
-                .is_some_and(|dir| dir.as_os_str() == "memory")
-        })
+    claude_memory_dir(path, home).is_some()
+}
+
+/// The `<home>/.claude/projects/<project>/memory` directory that `path` is
+/// in or is, if any.
+fn claude_memory_dir(path: &Path, home: &Path) -> Option<PathBuf> {
+    let projects = resolve_existing_prefix(&home.join(".claude/projects"));
+    let resolved = resolve_existing_prefix(path);
+    let mut rest = resolved.strip_prefix(&projects).ok()?.components();
+    let project = rest.next()?;
+    (rest.next()?.as_os_str() == "memory").then(|| projects.join(project).join("memory"))
 }
 
 /// Joins `path` onto `base` and removes `.` and `..` components lexically.
@@ -164,7 +234,46 @@ pub(crate) mod tests {
     use rstest::{fixture, rstest};
     use tempfile::TempDir;
 
-    use super::{Zone, absolutize, default_workspace_root, is_claude_memory, write_zone};
+    use super::{
+        Zone, absolutize, default_workspace_root, is_claude_memory, is_disposable_in, write_zone,
+    };
+
+    #[test]
+    fn memory_files_are_disposable_but_not_the_memory_directory() {
+        // Outside the temporary folder, so only the memory rule applies.
+        let home = Path::new("/srv/guard-probe-home");
+        let memory = home.join(".claude/projects/-home-dev-repo/memory");
+        let disposable = |path: &Path| is_disposable_in(path, Some(home));
+        assert!(disposable(&memory.join("old-note.md")));
+        assert!(disposable(&memory.join("*.md")));
+        assert!(disposable(&memory.join("{old-note,stale-note}.md")));
+        assert!(!disposable(&memory));
+        assert!(!disposable(&memory.join("{..,old-note.md}")));
+        assert!(!disposable(
+            &home.join(".claude/projects/-home-dev-repo/transcript.jsonl")
+        ));
+    }
+
+    #[rstest]
+    fn temporary_files_are_disposable_unless_a_repo_is_in_reach(layout: Layout) {
+        // The layout lives in the system temporary folder.
+        let disposable = |path: &Path| is_disposable_in(path, None);
+        let base = layout.outside.parent().unwrap();
+        assert!(disposable(&layout.outside.join("probe.txt")));
+        assert!(disposable(&layout.outside));
+        assert!(disposable(&layout.outside.join("*")));
+        assert!(!disposable(base), "holds the repo");
+        assert!(!disposable(&base.join("*")), "may match the repo");
+        assert!(
+            !disposable(&layout.root.join("notes.txt")),
+            "inside the repo"
+        );
+        assert!(
+            !disposable(&std::env::temp_dir()),
+            "the temporary folder itself"
+        );
+        assert!(!disposable(Path::new("/srv/guard-probe/notes.txt")));
+    }
 
     #[test]
     fn claude_memory_is_recognised_and_nothing_else_under_claude() {

@@ -95,6 +95,8 @@ Outside any jj repo, it keeps project work out of unversioned folders: agents ma
 
 Repos that are not projects, such as a dotfiles source or a scratch repo, can opt out with `jj config set --repo jj-workspace-guard.enabled false`, run in that repo. Claude Code's memory directories (`~/.claude/projects/*/memory/`) are always writable.
 
+`rm`, `rmdir`, `unlink`, `mv`, `cp` and `touch` are allowed anywhere when everything they change is a disposable file: one in a Claude Code memory directory, or in a temporary folder with no jj or git repo in or under it. `cp` may copy from anywhere into such a place. So agents can delete or rename a memory, or clean up their own temporary files, without a workspace.
+
 ## How the jj plugins work together
 
 - **active-descriptions** enforces that every session ends with up-to-date descriptions, using **conventional-commits** for formatting. `/describe` ties them together.

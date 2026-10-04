@@ -11,8 +11,8 @@ use std::fmt;
 use std::path::Path;
 
 use crate::commands::{
-    FORBIDDEN_FLAGS, GH_SUBCOMMANDS, GIT_LISTING_SUBCOMMANDS, GIT_SUBCOMMANDS, JJ_SUBCOMMANDS,
-    OUTSIDE_TOOLS, READ_ONLY, SHELL_BUILTINS, UNTRACKED_WRITES, ZELLIJ_SUBCOMMANDS,
+    DISPOSABLE_WRITES, FORBIDDEN_FLAGS, GH_SUBCOMMANDS, GIT_LISTING_SUBCOMMANDS, GIT_SUBCOMMANDS,
+    JJ_SUBCOMMANDS, OUTSIDE_TOOLS, READ_ONLY, SHELL_BUILTINS, UNTRACKED_WRITES, ZELLIJ_SUBCOMMANDS,
 };
 use crate::workspace::Zone;
 
@@ -130,6 +130,12 @@ impl fmt::Display for Denial {
             f,
             "  - sed as a filter only (`sed -n '1,50p' file`, `sed 's/a/b/g'`), uniq with at most \
              one file, command -v, env with no arguments"
+        )?;
+        writeln!(
+            f,
+            "  - {} on files in Claude's memory, or in a temporary folder with no repo in it \
+             (cp may copy from anywhere)",
+            DISPOSABLE_WRITES.join(" ")
         )?;
         if outside {
             writeln!(

@@ -280,10 +280,12 @@ impl Checker {
                         .map_or("", |word| word.value.as_str())
                 ));
             };
-            let checked = if zone == Zone::Outside {
-                commands::check_outside(name, &args, self.cwd.as_deref())
-            } else {
-                commands::check(name, &args, self.cwd.as_deref())
+            let checked = match commands::file_operands(name, &args) {
+                Some(operands) => operands.and_then(|operands| self.file_command(name, &operands)),
+                None if zone == Zone::Outside => {
+                    commands::check_outside(name, &args, self.cwd.as_deref())
+                }
+                None => commands::check(name, &args, self.cwd.as_deref()),
             };
             if let Err(reason) = checked {
                 return self.refuse(reason);
@@ -357,6 +359,62 @@ impl Checker {
         }
     }
 
+    /// Allows a file command (see [`commands::DISPOSABLE_WRITES`]) when
+    /// everything it changes is disposable. `cp` only reads its sources;
+    /// `cp` and `mv` into an existing directory change the entries named
+    /// after their sources there.
+    fn file_command(&self, name: &str, operands: &[Option<&str>]) -> Result<(), String> {
+        let mut paths = Vec::new();
+        for operand in operands {
+            let Some(path) = operand.and_then(|operand| self.absolute(operand)) else {
+                return Err(format!(
+                    "`{name} {}` is not a literal path the guard can locate",
+                    operand.unwrap_or("…")
+                ));
+            };
+            paths.push(path);
+        }
+        let mut changed = Vec::new();
+        match (name, paths.split_last()) {
+            ("cp" | "mv", Some((destination, sources))) => {
+                if name == "mv" {
+                    changed.extend(sources.iter().cloned());
+                }
+                if destination.is_dir() {
+                    changed.extend(
+                        sources
+                            .iter()
+                            .filter_map(|source| source.file_name())
+                            .map(|file_name| destination.join(file_name)),
+                    );
+                } else {
+                    changed.push(destination.clone());
+                }
+            }
+            _ => changed = paths,
+        }
+        match changed.iter().find(|path| !workspace::is_disposable(path)) {
+            Some(path) => Err(format!(
+                "`{name}` would change {}, which is neither in Claude's memory nor in a \
+                 temporary folder clear of every repo",
+                path.display()
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// `path` made absolute against the current directory, if that is known
+    /// or not needed.
+    fn absolute(&self, path: &str) -> Option<PathBuf> {
+        match &self.cwd {
+            Some(cwd) => Some(workspace::absolutize(cwd, Path::new(path))),
+            None if Path::new(path).is_absolute() => {
+                Some(workspace::absolutize(Path::new("/"), Path::new(path)))
+            }
+            None => None,
+        }
+    }
+
     /// Blocks an output redirect into a default workspace, wherever the
     /// command itself runs.
     fn write_target(&self, target: Option<&str>, source: &str) -> Result<(), Denial> {
@@ -366,17 +424,10 @@ impl Checker {
                  where it writes"
             ));
         };
-        let path = match &self.cwd {
-            Some(cwd) => workspace::absolutize(cwd, Path::new(target)),
-            None if Path::new(target).is_absolute() => {
-                workspace::absolutize(Path::new("/"), Path::new(target))
-            }
-            None => {
-                return self.refuse(format!(
-                    "the redirect to `{target}` is relative to a directory the guard cannot \
-                     determine"
-                ));
-            }
+        let Some(path) = self.absolute(target) else {
+            return self.refuse(format!(
+                "the redirect to `{target}` is relative to a directory the guard cannot determine"
+            ));
         };
         match workspace::write_zone(&path) {
             Zone::Free => Ok(()),
@@ -509,6 +560,13 @@ mod tests {
     #[case("FOO=1 printenv FOO")]
     #[case("mkdir -p workspaces && jj workspace add workspaces/new")]
     #[case("printf '/workspaces/\\n' >> .git/info/exclude")]
+    #[case("rm -f ~/.claude/projects/-guard-test/memory/old-note.md")]
+    #[case(
+        "mv ~/.claude/projects/-guard-test/memory/a.md ~/.claude/projects/-guard-test/memory/b.md"
+    )]
+    #[case("rm {outside}/old.txt && rm -rf {outside}/*")]
+    #[case("cp src/main.rs {outside}/main.rs.bak && touch {outside}/stamp")]
+    #[case("cp -r src {outside}")]
     fn allowed_in_default(layout: Layout, #[case] command: &str) {
         let command = expand(command, &layout);
         assert_eq!(check(&command, &layout.root), Ok(()), "{command}");
@@ -548,6 +606,13 @@ mod tests {
     #[case("cd {added} & rm notes.txt")]
     #[case("jj -R {root} new")]
     #[case("if [ -f x ]; then")]
+    #[case("touch notes.txt")]
+    #[case("rm \"$f\"")]
+    #[case("rm -rf ~/.claude/projects/-guard-test/memory")]
+    #[case("rm -rf {outside}/..")]
+    #[case("cp {outside}/a.txt src/a.txt")]
+    #[case("mv {outside}/a.txt {root}/a.txt")]
+    #[case("mv -t {outside} {outside}/a.txt")]
     fn denied_in_default(layout: Layout, #[case] command: &str) {
         let command = expand(command, &layout);
         let denial = check(&command, &layout.root).expect_err(&command);
@@ -575,6 +640,7 @@ mod tests {
     #[case("aws s3 ls && kubectl get pods -A")]
     #[case("ssh laptop-ts uname -a")]
     #[case("echo hi > notes.txt")]
+    #[case("rm old.txt")]
     #[case("cd {added} && cargo build")]
     fn allowed_outside_any_repo(layout: Layout, #[case] command: &str) {
         let command = expand(command, &layout);
@@ -583,7 +649,7 @@ mod tests {
 
     #[rstest]
     #[case("cargo build")]
-    #[case("rm -rf target")]
+    #[case("rm -rf /srv/guard-probe/target")]
     #[case("sed -i s/a/b/ f.txt")]
     #[case("git init")]
     #[case("git clone https://github.com/o/r")]

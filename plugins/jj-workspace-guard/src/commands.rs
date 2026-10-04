@@ -284,6 +284,31 @@ pub fn check_outside(name: &str, args: &[Arg], cwd: Option<&Path>) -> Result<(),
     }
 }
 
+/// File commands allowed in any zone when everything they change is
+/// disposable (see [`workspace::is_disposable`]).
+pub const DISPOSABLE_WRITES: &[&str] = &["cp", "mv", "rm", "rmdir", "touch", "unlink"];
+
+/// The operands of a command in [`DISPOSABLE_WRITES`], or `None` for any
+/// other command. For `cp` and `mv`, the last operand is the destination.
+pub fn file_operands<'a>(
+    name: &str,
+    args: &'a [Arg],
+) -> Option<Result<Vec<Option<&'a str>>, String>> {
+    let value_flags: &[&str] = match name {
+        "cp" | "mv" => &["-S", "--suffix"],
+        "touch" => &["-d", "--date", "-r", "--reference", "-t"],
+        "rm" | "rmdir" | "unlink" => &[],
+        _ => return None,
+    };
+    let target_flags = ["-t", "--target-directory", "-T", "--no-target-directory"];
+    if matches!(name, "cp" | "mv") && has_any(args, &target_flags) {
+        return Some(Err(format!(
+            "`{name}` with -t or -T is not checked; name the destination last instead"
+        )));
+    }
+    Some(Ok(positionals(args, value_flags)))
+}
+
 /// Checks one simple command run from `cwd` in the default workspace,
 /// returning why it is not allowed.
 ///
