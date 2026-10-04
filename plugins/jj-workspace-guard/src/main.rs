@@ -12,6 +12,8 @@
 //!   reason tells the agent how to proceed. Any other call gets no output,
 //!   leaving the decision to the normal permission flow; the guard never
 //!   answers `allow`.
+//!
+//! `jj-workspace-guard allowlist` prints the complete allowlists.
 
 mod commands;
 mod message;
@@ -61,6 +63,16 @@ struct Start {
 }
 
 fn main() -> anyhow::Result<()> {
+    // `jj-workspace-guard allowlist` prints the full allowlists, the source of
+    // ALLOWLIST.md; with no arguments the binary is the hook.
+    if std::env::args().nth(1).as_deref() == Some("allowlist") {
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(message::allowlist().as_bytes())
+            .context("write the allowlist")?;
+        return stdout.flush().context("flush the allowlist");
+    }
+
     let mut raw = String::new();
     std::io::stdin()
         .read_to_string(&mut raw)

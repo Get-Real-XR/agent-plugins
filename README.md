@@ -87,7 +87,7 @@ Makes the default jj workspace (`default@`) read-only for agents, so parallel ag
 | **Install** | `claude plugin install jj-workspace-guard@agent-plugins` |
 | **Requires** | jj, Rust toolchain (cargo) |
 
-A `PreToolUse` hook blocks `Edit`, `Write` and `NotebookEdit` on files inside `default@`, and Bash commands run there unless every command in them is on a read-only allowlist (`ls`, `rg`, `jq`, `jj log`, `git diff`, `gh pr view`, …). The bash is parsed, so pipes, loops, substitutions and redirects are checked piece by piece, and a leading `cd` into another workspace is followed. The block message tells the agent to create its own workspace with `jj workspace add`, `cd` into it, and work there, where nothing is restricted.
+A `PreToolUse` hook blocks `Edit`, `Write` and `NotebookEdit` on files inside `default@`, and Bash commands run there unless every command in them is on a read-only allowlist (`ls`, `rg`, `jq`, `jj log`, `git diff`, `gh pr view`, …). The bash is parsed, so pipes, loops, substitutions and redirects are checked piece by piece, and a leading `cd` into another workspace is followed. The block message tells the agent to create its own workspace with `jj workspace add`, `cd` into it, and work there, where nothing is restricted. It suggests the folder jj-worktree-compat uses (`JJ_WORKTREE_COMPAT_DIR`, default `.claude/worktrees`), summarizes what is allowed, and points to the full list in [`plugins/jj-workspace-guard/ALLOWLIST.md`](plugins/jj-workspace-guard/ALLOWLIST.md), which `jj-workspace-guard allowlist` also prints and a test keeps current.
 
 It guards against mistakes, not adversaries: once an agent's shell is in another workspace, the guard does not inspect what its commands touch.
 

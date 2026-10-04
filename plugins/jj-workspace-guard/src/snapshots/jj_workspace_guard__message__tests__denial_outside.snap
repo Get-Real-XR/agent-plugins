@@ -4,18 +4,9 @@ expression: denial.to_string()
 ---
 jj-workspace-guard: you are outside any jj repo, so this was blocked: `cargo` is not on the read-only allowlist.
 
-Project work happens in a jj repo, where every change is recorded; `cd` into the repo the work belongs to (the Bash tool keeps that directory), clone it with `jj git clone --colocate <url> <dir>`, or start one with `mkdir -p <dir> && cd <dir> && jj git init` (colocated by default; add `--no-colocate` for a repo only agents use, such as a scratch repo for one-off tasks). Your instructions say where repos and scratch work belong.
+Project work happens in a jj repo, where every change is recorded; `cd` into the repo the work belongs to (the Bash tool keeps that directory), clone it with `jj git clone <url> <dir>`, or start one with `mkdir -p <dir> && cd <dir> && jj git init` (both colocated by default; add `--no-colocate` for a repo only agents use, such as a scratch repo for one-off tasks). Your instructions say where repos and scratch work belong.
 
-Read, Grep, Glob and other tools that do not edit files are not affected. Allowed in Bash outside a repo:
-  - b2sum base64 basename cat cksum cmp column comm cut date df diff dirname du echo egrep false fgrep fold free grep head hexdump hostname id jq join ls md5sum nl nproc od paste pgrep printenv printf ps pwd readlink realpath rev seq sha1sum sha256sum sha512sum stat strings tac tail test [ tr true type uname uptime wc which whoami mkdir
-  - shell builtins: : cd declare exit export local read set shift unset wait
-  - fd (without -x -X --exec --exec-batch), file (without -C --compile), find (without -delete -exec -execdir -fls -fprint -fprint0 -fprintf -ok -okdir), rg (without --pre), sort (without -o --output), tree (without -o)
-  - sed as a filter only (`sed -n '1,50p' file`, `sed 's/a/b/g'`), uniq with at most one file, command -v, env with no arguments
-  - cp mv rm rmdir touch unlink on files in Claude's memory, or in a temporary folder with no repo in it (cp may copy from anywhere)
-  - jj git init, jj git clone, and jj log, status, diff, show, evolog, interdiff, root, help, version, op log, op show, op diff, file list, file show, file annotate, file search, bookmark list, tag list, config list, config get, config path, git remote list, git root, workspace list, workspace root, workspace add
-  - git annotate, blame, cat-file, check-attr, check-ignore, count-objects, describe, diff, diff-files, diff-index, diff-tree, for-each-ref, grep, help, log, ls-files, ls-remote, ls-tree, merge-base, name-rev, rev-list, rev-parse, shortlog, show, show-ref, status, var, version, whatchanged (but not git init or git clone: use jj git init and jj git clone)
-  - machine and service tools: aws, chezmoi, claude, gh, gpuq, kubectl, op-agent, ssh, zellij
-  - pipes, loops, command substitution and output redirects, as long as every command is allowed and redirects write only to temporary folders (such as /tmp or /var/tmp) or Claude's memory
-Edit and Write outside a repo are allowed only in temporary folders and Claude's memory.
+Allowed outside a repo: Read, Grep, Glob and other tools that do not edit files; Bash that only reads (ls, cat, rg, jq, find or fd without exec, sed as a filter, …); `jj git init` and `jj git clone` (not `git init` or `git clone`); machine and service tools (aws, chezmoi, claude, gh, gpuq, kubectl, op-agent, ssh, zellij); cp, mv, rm, rmdir, touch, unlink and writes in temporary folders and Claude's memory.
+The full list is in /home/dev/.claude/plugins/cache/agent-plugins/jj-workspace-guard/1.0.0/ALLOWLIST.md.
 
 Do not work around this guard, for example through another interpreter, a different path to the same files, or another agent's workspace. If the task truly needs a file outside any repo, stop and ask the user.

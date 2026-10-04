@@ -6,21 +6,12 @@ jj-workspace-guard: default@ is read-only for agents, so this was blocked: `jj n
 
 /home/dev/repos/project is the default jj workspace (default@). The user and other agents share its working copy, so an edit or state-changing command here lands in someone else's in-progress change.
 
-To make changes, work in a jj workspace of your own:
-  1. Run `jj workspace list` to find one already made for this task, or create one with `mkdir -p /home/dev/repos/project/workspaces && jj workspace add /home/dev/repos/project/workspaces/<name> -r <base revision>` (allowed from default@, as is appending to the repo's .git/info/exclude).
-  2. `cd /home/dev/repos/project/workspaces/<name>`. The Bash tool keeps that directory for later calls, and commands run there are not restricted.
-  3. Edit and Write files by absolute path under /home/dev/repos/project/workspaces/<name>/.
+To make changes, work in a jj workspace of your own (`jj workspace list` shows any already made for this task). Both commands are allowed from default@:
+  mkdir -p /home/dev/repos/project/.claude/worktrees && jj workspace add /home/dev/repos/project/.claude/worktrees/<name>
+  cd /home/dev/repos/project/.claude/worktrees/<name>
+The new workspace starts on the same parents as default@'s working copy (add `-r <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory you `cd` into, nothing is restricted there, and Edit and Write take absolute paths under it.
 
-Read, Grep, Glob and other tools that do not edit files are not affected. Allowed in Bash in default@ without a workspace:
-  - b2sum base64 basename cat cksum cmp column comm cut date df diff dirname du echo egrep false fgrep fold free grep head hexdump hostname id jq join ls md5sum nl nproc od paste pgrep printenv printf ps pwd readlink realpath rev seq sha1sum sha256sum sha512sum stat strings tac tail test [ tr true type uname uptime wc which whoami mkdir
-  - shell builtins: : cd declare exit export local read set shift unset wait
-  - fd (without -x -X --exec --exec-batch), file (without -C --compile), find (without -delete -exec -execdir -fls -fprint -fprint0 -fprintf -ok -okdir), rg (without --pre), sort (without -o --output), tree (without -o)
-  - sed as a filter only (`sed -n '1,50p' file`, `sed 's/a/b/g'`), uniq with at most one file, command -v, env with no arguments
-  - cp mv rm rmdir touch unlink on files in Claude's memory, or in a temporary folder with no repo in it (cp may copy from anywhere)
-  - jj log, status, diff, show, evolog, interdiff, root, help, version, op log, op show, op diff, file list, file show, file annotate, file search, bookmark list, tag list, config list, config get, config path, git remote list, git root, workspace list, workspace root, workspace add
-  - git annotate, blame, cat-file, check-attr, check-ignore, count-objects, describe, diff, diff-files, diff-index, diff-tree, for-each-ref, grep, help, log, ls-files, ls-remote, ls-tree, merge-base, name-rev, rev-list, rev-parse, shortlog, show, show-ref, status, var, version, whatchanged, and the listing forms of branch, config, reflog, remote, stash, worktree
-  - gh api, auth status, issue list, issue status, issue view, pr checks, pr diff, pr list, pr status, pr view, release list, release view, repo view, run list, run view, search, workflow list, workflow view (api: GET only)
-  - zellij list-sessions, ls, action dump-screen, action list-clients, action list-panes, action list-tabs, action query-tab-names, action rename-pane, action rename-tab
-  - pipes, loops, command substitution and output redirects, as long as every command is allowed and redirects write outside default@ (such as /dev/null or a scratch directory)
+Allowed in default@ without a workspace: Read, Grep, Glob and other tools that do not edit files; Bash that only reads (ls, cat, rg, jq, find or fd without exec, sed as a filter, …); jj, git, gh and zellij commands that only read (log, status, diff, show, …), plus `jj workspace add` and mkdir; cp, mv, rm, rmdir, touch, unlink on files in Claude's memory or a temporary folder with no repo in it; pipes and redirects that write outside default@.
+The full list is in /home/dev/.claude/plugins/cache/agent-plugins/jj-workspace-guard/1.0.0/ALLOWLIST.md.
 
 Do not work around this guard, for example through another interpreter, a different path to the same files, or another agent's workspace. If the task truly needs a change in default@ itself, stop and ask the user.
