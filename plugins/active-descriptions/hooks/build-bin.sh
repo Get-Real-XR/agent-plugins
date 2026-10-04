@@ -1,0 +1,1 @@
+../../../shared/build-bin.sh

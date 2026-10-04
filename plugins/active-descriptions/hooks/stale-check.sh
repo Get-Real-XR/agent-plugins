@@ -24,6 +24,7 @@ revset=$1
 
 source "$(dirname "$0")/guard-enabled.sh"
 source "$(dirname "$0")/session-state.sh"
+source "$(dirname "$0")/plugin-bin.sh"
 
 IFS=$'\x1f' read -r session agent hook_active < <(
   jq -r '[.session_id // "", .agent_id // "main", (.stop_hook_active // false | tostring)] | join("\u001f")'
@@ -45,7 +46,8 @@ fi
 
 revset="($revset) ~ ::(working_copies() ~ @)"
 
-msg=$(cargo run -r --manifest-path "${CLAUDE_PLUGIN_ROOT}/Cargo.toml" -- "$revset" 2>/dev/null) || exit 0
+bin=$(plugin_bin jj-stale-descriptions) || exit 0
+msg=$("$bin" "$revset" 2>/dev/null) || exit 0
 [ -n "$msg" ] || exit 0
 
 if [ -n "$session" ]; then

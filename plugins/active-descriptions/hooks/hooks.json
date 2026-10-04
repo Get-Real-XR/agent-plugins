@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo build -r --manifest-path ${CLAUDE_PLUGIN_ROOT}/Cargo.toml 2>/dev/null",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/build-bin.sh\" jj-stale-descriptions 2>/dev/null",
             "timeout": 300,
             "async": true
           }

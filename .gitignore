@@ -1,2 +1,3 @@
 plugins/active-descriptions/target/
 plugins/jj-workspace-guard/target/
+plugins/*/bin/

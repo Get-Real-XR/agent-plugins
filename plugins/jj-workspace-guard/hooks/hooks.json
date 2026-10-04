@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v cargo >/dev/null 2>&1 || { echo 'jj-workspace-guard: cargo (Rust toolchain) is required but not found. Install: https://rustup.rs/' >&2; exit 1; }; cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "command": "command -v cargo >/dev/null 2>&1 || { echo 'jj-workspace-guard: cargo (Rust toolchain) is required but not found. Install: https://rustup.rs/' >&2; exit 1; }; b=\"${CLAUDE_PLUGIN_ROOT}/bin/jj-workspace-guard\"; [ -x \"$b\" ] || \"${CLAUDE_PLUGIN_ROOT}/hooks/build-bin.sh\" jj-workspace-guard </dev/null >/dev/null 2>&1; [ -x \"$b\" ] && exec \"$b\"; exec cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
             "timeout": 300
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "command": "b=\"${CLAUDE_PLUGIN_ROOT}/bin/jj-workspace-guard\"; [ -x \"$b\" ] || \"${CLAUDE_PLUGIN_ROOT}/hooks/build-bin.sh\" jj-workspace-guard </dev/null >/dev/null 2>&1; [ -x \"$b\" ] && exec \"$b\"; exec cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
             "timeout": 300
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
+            "command": "b=\"${CLAUDE_PLUGIN_ROOT}/bin/jj-workspace-guard\"; [ -x \"$b\" ] || \"${CLAUDE_PLUGIN_ROOT}/hooks/build-bin.sh\" jj-workspace-guard </dev/null >/dev/null 2>&1; [ -x \"$b\" ] && exec \"$b\"; exec cargo run -q -r --manifest-path \"${CLAUDE_PLUGIN_ROOT}/Cargo.toml\"",
             "timeout": 300
           }
         ]

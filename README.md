@@ -113,5 +113,7 @@ Repos that are not projects, such as a dotfiles source or a scratch repo, can op
 | jj-worktree-compat | required | — |
 | jj-workspace-guard | required | required |
 
+active-descriptions and jj-workspace-guard are Rust. Each installed version builds its binary once, the first time a session needs it, into a cargo target folder shared by all versions (`$XDG_CACHE_HOME/agent-plugins/target`, by default `~/.cache/agent-plugins/target`), and copies it to the plugin's `bin/`; hooks run that binary directly. A new version recompiles only the plugin crate and whatever dependencies changed.
+
 Install jj: [jj-vcs.github.io/jj/latest/install-and-setup](https://jj-vcs.github.io/jj/latest/install-and-setup/)
 Install Rust: [rustup.rs](https://rustup.rs/)
