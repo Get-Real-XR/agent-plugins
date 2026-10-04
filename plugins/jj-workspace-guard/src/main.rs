@@ -1,5 +1,5 @@
-//! Claude Code hook that keeps agents from writing in the default jj
-//! workspace.
+//! Claude Code and Codex hook that keeps agents from writing in the default
+//! jj workspace. Codex sends hook input in Claude Code's format.
 //!
 //! Several agents, and the user, may share one repo. Each agent gets its own
 //! jj workspace for changes; the default workspace stays read-only so no one
@@ -7,11 +7,11 @@
 //!
 //! - On `SessionStart` and `SubagentStart` in default@, the agent is told the
 //!   rule up front, so it moves to a workspace before anything is blocked.
-//! - On `PreToolUse`, file-editing tools aimed inside default@ are denied, as
-//!   are Bash commands run there that are not known to be read-only. The
-//!   reason tells the agent how to proceed. Any other call gets no output,
-//!   leaving the decision to the normal permission flow; the guard never
-//!   answers `allow`.
+//! - On `PreToolUse`, file-editing tools aimed inside default@ (Codex's
+//!   `apply_patch` among them) are denied, as are Bash commands run there
+//!   that are not known to be read-only. The reason tells the agent how to
+//!   proceed. Any other call gets no output, leaving the decision to the
+//!   normal permission flow; the guard never answers `allow`.
 //!
 //! `jj-workspace-guard allowlist` prints the complete allowlists.
 
@@ -21,7 +21,7 @@ mod shell;
 mod workspace;
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -130,8 +130,34 @@ fn check(input: &ToolCall) -> Option<Denial> {
                 }),
             }
         }
+        // Codex edits files with apply_patch, passing the patch as `command`.
+        "apply_patch" => patch_paths(input.tool_input.command.as_deref()?)
+            .map(|target| workspace::absolutize(&input.cwd, Path::new(target)))
+            .find_map(|target| match workspace::write_zone(&target) {
+                Zone::Free => None,
+                zone => Some(Denial {
+                    reason: format!("apply_patch would modify {}", target.display()),
+                    zone,
+                }),
+            }),
         _ => None,
     }
+}
+
+/// The files an apply_patch patch adds, updates, deletes or moves to.
+fn patch_paths(patch: &str) -> impl Iterator<Item = &str> {
+    const MARKERS: [&str; 4] = [
+        "*** Add File: ",
+        "*** Update File: ",
+        "*** Delete File: ",
+        "*** Move to: ",
+    ];
+    patch.lines().filter_map(|line| {
+        MARKERS
+            .iter()
+            .find_map(|marker| line.strip_prefix(marker))
+            .map(str::trim)
+    })
 }
 
 #[cfg(test)]
@@ -166,6 +192,28 @@ mod tests {
             "cwd": cwd,
         }))
         .unwrap()
+    }
+
+    #[rstest]
+    fn codex_apply_patch_is_checked_by_every_path_it_touches(layout: Layout) {
+        let patch =
+            |body: &str| json!({ "command": format!("*** Begin Patch\n{body}\n*** End Patch") });
+        let added = layout.added.display();
+        let denied = [
+            format!("*** Add File: {}/notes.md\n+hi", layout.root.display()),
+            "*** Update File: src/lib.rs\n@@\n-a\n+b".to_owned(),
+            format!(
+                "*** Update File: {added}/a.rs\n*** Move to: {}/a.rs",
+                layout.root.display()
+            ),
+            format!("*** Add File: {added}/ok.md\n+hi\n*** Delete File: README.md"),
+        ];
+        for body in denied {
+            let denial = check(&input(&layout, "apply_patch", patch(&body)));
+            assert!(denial.is_some(), "{body}");
+        }
+        let allowed = format!("*** Add File: {added}/notes.md\n+hi\n*** Update File: {added}/a.rs");
+        assert!(check(&input(&layout, "apply_patch", patch(&allowed))).is_none());
     }
 
     #[rstest]

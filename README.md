@@ -97,6 +97,25 @@ Repos that are not projects, such as a dotfiles source or a scratch repo, can op
 
 `rm`, `rmdir`, `unlink`, `mv`, `cp` and `touch` are allowed anywhere when everything they change is a disposable file: one in a Claude Code memory directory, or in a temporary folder with no jj or git repo in or under it. `cp` may copy from anywhere into such a place. So agents can delete or rename a memory, or clean up their own temporary files, without a workspace. `rm` and `rmdir` (and `mv` of a source) may also remove the root folder of a workspace that its repo no longer lists: an agent finishing with a workspace runs `jj workspace forget` inside it, then removes the folder from anywhere. Registered workspaces, and paths inside any workspace, stay protected.
 
+#### Codex
+
+Codex (0.159 and later) runs hooks with Claude Code's input and output format, so jj-workspace-guard protects Codex sessions too, including edits made through Codex's `apply_patch` tool. Point Codex at the guard in the agent-plugins marketplace clone, which `claude plugin marketplace update agent-plugins` keeps current; `hooks/codex-hook.sh` rebuilds the binary whenever the plugin's version changes. In `~/.codex/hooks.json` (or a project's `.codex/hooks.json`):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-workspace-guard/hooks/codex-hook.sh\"" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash|apply_patch", "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-workspace-guard/hooks/codex-hook.sh\"" }] }
+    ]
+  }
+}
+```
+
+Codex asks you to trust a hook before it first runs it.
+
 ## How the jj plugins work together
 
 - **active-descriptions** enforces that every session ends with up-to-date descriptions, using **conventional-commits** for formatting. `/describe` ties them together.
