@@ -33,7 +33,7 @@ Keeps your jj change descriptions in sync with your actual changes.
 | **Skill** | `/describe` (user-invocable) |
 | **Requires** | jj, Rust toolchain (cargo) |
 
-Blocks session exit until every in-flight change has an up-to-date description. When the agent detects drift, it runs `/describe` — reading the diff and conversation history, drafting a Conventional Commits description, and applying it via `jj describe`. Also gates Bash commands on being inside a jj repository.
+Blocks session exit until every in-flight change has an up-to-date description. When the agent detects drift, it runs `/describe` — reading the diff and conversation history, drafting a Conventional Commits description, and applying it via `jj describe`. Also gates Bash commands on being inside a jj repository, letting through commands that make or clone one; with jj-workspace-guard enabled it defers to the guard's finer rules.
 
 Invoke `/describe` manually at any time to co-author a description mid-session.
 

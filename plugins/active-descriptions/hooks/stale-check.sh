@@ -14,17 +14,7 @@
 
 revset=$1
 
-guard_enabled() {
-  local settings
-  for settings in "$HOME/.claude/settings.json" \
-    "${CLAUDE_PROJECT_DIR:-.}/.claude/settings.json" \
-    "${CLAUDE_PROJECT_DIR:-.}/.claude/settings.local.json"; do
-    [ -f "$settings" ] &&
-      jq -e '.enabledPlugins["jj-workspace-guard@agent-plugins"] == true' "$settings" >/dev/null 2>&1 &&
-      return 0
-  done
-  return 1
-}
+source "$(dirname "$0")/guard-enabled.sh"
 
 root=$(jj root 2>/dev/null) || exit 0
 # Only the default workspace holds `.jj/repo` as a directory; added
