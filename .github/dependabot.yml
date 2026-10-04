@@ -1,0 +1,22 @@
+# Dependency updates for the Rust plugins. jj-lib gets a PR of its own, since
+# a new jj release usually needs code changes; everything else is grouped.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /plugins/active-descriptions
+      - /plugins/jj-workspace-guard
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      jj-lib:
+        patterns:
+          - jj-lib
+      dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - jj-lib

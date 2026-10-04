@@ -536,8 +536,81 @@ fn spill_to_tempfile(change_id_short: &str, detail: &str) -> Result<PathBuf> {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use jj_lib::backend::{CopyId, TreeValue};
+    use jj_lib::config::{ConfigLayer, ConfigSource};
+    use jj_lib::merged_tree::MergedTree;
+    use jj_lib::repo_path::RepoPath;
+    use jj_lib::signing::Signer;
+    use jj_lib::simple_backend::SimpleBackend;
+    use jj_lib::tree_builder::TreeBuilder;
+
     use super::*;
-    use testutils::{TestRepo, create_tree};
+
+    /// A repo on jj-lib's local backend in a temporary folder. jj's own
+    /// `testutils` crate offers the same, but it is not on crates.io, and
+    /// depending on it from git pins jj-lib to a git tag that dependency
+    /// updates cannot move.
+    struct TestRepo {
+        _dir: tempfile::TempDir,
+        repo: Arc<ReadonlyRepo>,
+    }
+
+    impl TestRepo {
+        fn init() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mut config = StackedConfig::with_defaults();
+            config.add_layer(
+                ConfigLayer::parse(
+                    ConfigSource::User,
+                    r#"
+                        user.name = "Test User"
+                        user.email = "test.user@example.com"
+                        operation.username = "test-username"
+                        operation.hostname = "host.example.com"
+                        debug.randomness-seed = 42
+                    "#,
+                )
+                .expect("valid config"),
+            );
+            let settings = UserSettings::from_config(config).expect("valid settings");
+            let repo = ReadonlyRepo::init(
+                &settings,
+                dir.path(),
+                &|_settings, store_path| Ok(Box::new(SimpleBackend::init(store_path))),
+                Signer::from_settings(&settings).expect("signer"),
+                ReadonlyRepo::default_op_store_initializer(),
+                ReadonlyRepo::default_op_heads_store_initializer(),
+                ReadonlyRepo::default_index_store_initializer(),
+                ReadonlyRepo::default_submodule_store_initializer(),
+            )
+            .block_on()
+            .expect("init repo");
+            Self { _dir: dir, repo }
+        }
+    }
+
+    fn create_tree(repo: &Arc<ReadonlyRepo>, files: &[(&RepoPath, &str)]) -> MergedTree {
+        let store = repo.store();
+        let mut builder = TreeBuilder::new(store.clone(), store.empty_tree_id().clone());
+        for (path, contents) in files {
+            let id = store
+                .write_file(path, &mut contents.as_bytes())
+                .block_on()
+                .expect("write file");
+            builder.set(
+                (*path).to_owned(),
+                TreeValue::File {
+                    id,
+                    executable: false,
+                    copy_id: CopyId::placeholder(),
+                },
+            );
+        }
+        MergedTree::resolved(
+            store.clone(),
+            builder.write_tree().block_on().expect("write tree"),
+        )
+    }
 
     /// Helper: create a tree with the given file contents.
     fn tree(repo: &Arc<ReadonlyRepo>, files: &[(&str, &str)]) -> jj_lib::merged_tree::MergedTree {
