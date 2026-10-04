@@ -72,7 +72,17 @@ Routes Claude Code worktree isolation through jj workspaces.
 
 Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal, after snapshotting it so no edit is lost. Drop-in replacement for Claude Code's built-in git worktrees. Like a git worktree made from `HEAD`, the new workspace does not contain your in-progress change; building it on top of that change instead would freeze the change for you wherever other workspaces' working copies are immutable (`working_copies()` in `immutable_heads()`). `plugins/jj-worktree-compat/tests/create-keeps-caller-mutable.sh` checks this.
 
-Workspaces go under `.claude/worktrees/` by default. Set `JJ_WORKTREE_COMPAT_DIR` (for example in the `env` block of Claude Code's settings) to put them elsewhere; an absolute path gets a subfolder per repo, and a relative path is taken from the default workspace's root, even when the caller is in an added workspace.
+Workspaces go under `.claude/worktrees/` by default. Set `JJ_WORKTREE_COMPAT_DIR` (for example in the `env` block of Claude Code's settings) to put them elsewhere; an absolute path gets a subfolder per repo, and a relative path is taken from the default workspace's root, even when the caller is in an added workspace. A folder outside the project also belongs in `permissions.additionalDirectories`, or Claude Code refuses to `cd` into it.
+
+Workspaces that agents add by hand with `jj workspace add` are cleaned up too. The plugin remembers the workspaces a session adds, and when the session ends it forgets and deletes the idle ones: after a snapshot, their working-copy change is empty and undescribed, so everything done there is in commits. A workspace stays while it has work in progress, or while another Claude or Codex session (by its transcript's `cwd` in the last hour) or a process works in it. The cleanup runs detached, since Claude Code may cancel `SessionEnd` hooks as it exits. `plugins/jj-worktree-compat/tests/lifecycle.sh` checks this.
+
+For workspaces that piled up before, run a sweep:
+
+```sh
+bash ~/.claude/plugins/marketplaces/agent-plugins/plugins/jj-worktree-compat/hooks/workspace-lifecycle.sh sweep <repo>
+```
+
+It lists each workspace as `recent` (a jj command changed it in the last day), `in use`, `has work` or `idle`, plus folders of workspaces jj has forgotten. `--apply` removes the idle ones, snapshotting each first; `--apply --forgotten` also deletes the forgotten folders, whose edits since they were forgotten are not recorded.
 
 Current Claude Code refuses a worktree that git resolves to an enclosing checkout. A jj workspace in a colocated repo, or anywhere under a git-managed home directory, has no `.git` of its own, so `EnterWorktree` and isolated subagents fail there until jj can give each workspace its own Git worktree. Create workspaces with `jj workspace add` and `cd` into them instead.
 
