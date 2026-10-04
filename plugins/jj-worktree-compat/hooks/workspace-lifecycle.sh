@@ -13,7 +13,7 @@
 # A workspace is idle when, after a fresh snapshot, its working-copy change is
 # empty and undescribed: everything done there is in commits that outlive the
 # workspace. A workspace stays while something else works in it: a Claude or
-# Codex session whose transcript names it as its cwd within the last hour, or
+# Codex session written to in the last hour whose latest cwd is inside it, or
 # a process whose current directory is inside it.
 set -u
 
@@ -55,12 +55,17 @@ recent() {
 # Whether another session or a process works in $1. $2 is this session's id,
 # whose own transcript does not count.
 in_use() {
-  local root=$1 own=${2:-} transcript
+  local root=$1 own=${2:-} transcript cwd
   while IFS= read -r transcript; do
     if [ -n "$own" ]; then
       case "$transcript" in */"$own".jsonl | */"$own"/*) continue ;; esac
     fi
-    grep -qF "\"cwd\":\"$root" "$transcript" 2>/dev/null && return 0
+    # The session's latest cwd: one that visited the workspace and moved on
+    # no longer holds it.
+    cwd=$(tail -c 262144 "$transcript" 2>/dev/null | grep -o '"cwd":"[^"]*"' | tail -1)
+    cwd=${cwd#\"cwd\":\"}
+    cwd=${cwd%\"}
+    case "$cwd" in "$root" | "$root"/*) return 0 ;; esac
   done < <(find "$HOME/.claude/projects" "$HOME/.codex/sessions" -name '*.jsonl' -mmin -60 2>/dev/null)
   if [ -d /proc/self ]; then
     local proc

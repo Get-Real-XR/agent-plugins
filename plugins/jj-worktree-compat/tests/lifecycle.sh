@@ -31,14 +31,16 @@ add busy "cd $repo && jj workspace add --name busy ~/workspaces/repo/busy"
 add shared "jj workspace add \"$ws/shared\" -r @-"
 add gone "jj workspace add --name gone $ws/gone"
 add occupied "jj workspace add --name occupied $ws/occupied"
+add visited "jj workspace add --name visited $ws/visited"
 (cd "$repo" && jj workspace add --name other "$ws/other" >/dev/null 2>&1)
 
 jq -nc '{session_id: "s1", tool_name: "Bash", tool_input: {command: "ls -la"}}' | "$script" track
-[ "$(wc -l <"$XDG_STATE_HOME/jj-worktree-compat/sessions/s1")" -eq 5 ] ||
-  fail "expected 5 tracked workspaces, got: $(cat "$XDG_STATE_HOME/jj-worktree-compat/sessions/s1")"
+[ "$(wc -l <"$XDG_STATE_HOME/jj-worktree-compat/sessions/s1")" -eq 6 ] ||
+  fail "expected 6 tracked workspaces, got: $(cat "$XDG_STATE_HOME/jj-worktree-compat/sessions/s1")"
 
 printf 'work\n' >"$ws/busy/notes.txt"
 printf '{"cwd":"%s","type":"user"}\n' "$ws/shared" >"$HOME/.claude/projects/p/s2.jsonl"
+printf '{"cwd":"%s"}\n{"cwd":"%s"}\n' "$ws/visited" "$repo" >"$HOME/.claude/projects/p/s3.jsonl"
 (cd "$repo" && jj workspace forget gone >/dev/null 2>&1)
 (cd "$ws/occupied" && exec sleep 60) &
 occupant=$!
@@ -46,6 +48,7 @@ occupant=$!
 "$script" cleanup-session s1
 [ ! -e "$ws/idle" ] || fail "the idle workspace was kept"
 [ ! -e "$ws/gone" ] || fail "the forgotten folder was kept"
+[ ! -e "$ws/visited" ] || fail "a workspace another session only visited earlier was kept"
 [ -d "$ws/busy" ] || fail "the workspace with work was removed"
 [ -d "$ws/shared" ] || fail "the workspace another session uses was removed"
 [ -d "$ws/other" ] || fail "a workspace this session did not add was removed"
@@ -53,7 +56,7 @@ occupant=$!
 kill "$occupant"; wait "$occupant" 2>/dev/null || true
 (cd "$repo" && jj workspace list -T 'name ++ "\n"') | grep -qx idle && fail "idle is still listed"
 grep -qx "$ws/busy" "$XDG_STATE_HOME/jj-worktree-compat/sessions/s1" || fail "busy is no longer tracked"
-echo "ok: session end removed the idle and forgotten workspaces, kept busy, shared, occupied and other"
+echo "ok: session end removed the idle, visited and forgotten workspaces, kept busy, shared, occupied and other"
 
 # A sweep: everything was just used, so nothing is old enough.
 out=$("$script" sweep "$repo")
