@@ -360,9 +360,10 @@ impl Checker {
     }
 
     /// Allows a file command (see [`commands::DISPOSABLE_WRITES`]) when
-    /// everything it changes is disposable. `cp` only reads its sources;
-    /// `cp` and `mv` into an existing directory change the entries named
-    /// after their sources there.
+    /// everything it changes is disposable, or, for what it removes, the
+    /// root of a forgotten workspace. `cp` only reads its sources; `cp` and
+    /// `mv` into an existing directory change the entries named after their
+    /// sources there.
     fn file_command(&self, name: &str, operands: &[Option<&str>]) -> Result<(), String> {
         let mut paths = Vec::new();
         for operand in operands {
@@ -374,29 +375,44 @@ impl Checker {
             };
             paths.push(path);
         }
-        let mut changed = Vec::new();
-        match (name, paths.split_last()) {
+        // What the command removes (rm, rmdir and unlink operands, mv sources)
+        // and what it writes (cp and mv destinations, touch operands).
+        let (removed, written) = match (name, paths.split_last()) {
             ("cp" | "mv", Some((destination, sources))) => {
-                if name == "mv" {
-                    changed.extend(sources.iter().cloned());
-                }
-                if destination.is_dir() {
-                    changed.extend(
-                        sources
-                            .iter()
-                            .filter_map(|source| source.file_name())
-                            .map(|file_name| destination.join(file_name)),
-                    );
+                let written = if destination.is_dir() {
+                    sources
+                        .iter()
+                        .filter_map(|source| source.file_name())
+                        .map(|file_name| destination.join(file_name))
+                        .collect()
                 } else {
-                    changed.push(destination.clone());
-                }
+                    vec![destination.clone()]
+                };
+                let removed = if name == "mv" {
+                    sources.to_vec()
+                } else {
+                    Vec::new()
+                };
+                (removed, written)
             }
-            _ => changed = paths,
+            ("touch", _) => (Vec::new(), paths),
+            _ => (paths, Vec::new()),
+        };
+        // A forgotten workspace's folder may go too, so an agent can clean up
+        // a workspace of its own after `jj workspace forget`.
+        if let Some(path) = removed.iter().find(|path| {
+            !workspace::is_disposable(path) && !workspace::is_forgotten_workspace(path)
+        }) {
+            return Err(format!(
+                "`{name}` would remove {}, which is not in Claude's memory, in a temporary folder \
+                 clear of every repo, or a workspace already forgotten with `jj workspace forget`",
+                path.display()
+            ));
         }
-        match changed.iter().find(|path| !workspace::is_disposable(path)) {
+        match written.iter().find(|path| !workspace::is_disposable(path)) {
             Some(path) => Err(format!(
-                "`{name}` would change {}, which is neither in Claude's memory nor in a \
-                 temporary folder clear of every repo",
+                "`{name}` would write {}, which is neither in Claude's memory nor in a temporary \
+                 folder clear of every repo",
                 path.display()
             )),
             None => Ok(()),
@@ -659,6 +675,73 @@ mod tests {
     fn denied_outside_any_repo(layout: Layout, #[case] command: &str) {
         let denial = check(command, &layout.outside).expect_err(command);
         assert_eq!(denial.zone, Zone::Outside, "{command}");
+    }
+
+    /// A real repo with an added workspace `kept` and one `forgotten` with
+    /// `jj workspace forget`, both outside the default workspace, plus a
+    /// folder outside any repo. The fake layout above has no real repo for
+    /// `jj workspace list` to read.
+    #[test]
+    fn forgotten_workspace_roots_can_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        let jj = |args: &[&str]| {
+            let output = std::process::Command::new("jj")
+                .current_dir(&base)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "jj {args:?}");
+        };
+        let root = base.join("repo");
+        jj(&["git", "init", "repo"]);
+        let repo = root.to_str().unwrap();
+        jj(&["-R", repo, "workspace", "add", "--name", "kept", "kept"]);
+        jj(&[
+            "-R",
+            repo,
+            "workspace",
+            "add",
+            "--name",
+            "forgotten",
+            "forgotten",
+        ]);
+        jj(&["-R", repo, "workspace", "forget", "forgotten"]);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let kept = base.join("kept");
+        let forgotten = base.join("forgotten");
+
+        for cwd in [&root, &outside] {
+            for command in [
+                format!("rm -rf {}", forgotten.display()),
+                format!("rm -rf {}/", forgotten.display()),
+                format!(
+                    "mv {} {}/old-workspace",
+                    forgotten.display(),
+                    outside.display()
+                ),
+            ] {
+                assert_eq!(
+                    check(&command, cwd),
+                    Ok(()),
+                    "{command} from {}",
+                    cwd.display()
+                );
+            }
+            for command in [
+                format!("rm -rf {}", kept.display()),
+                format!("rm -rf {}/src", kept.display()),
+                format!("rm -rf {}/target", forgotten.display()),
+                format!("cp -r {} {}", outside.display(), forgotten.display()),
+            ] {
+                assert!(
+                    check(&command, cwd).is_err(),
+                    "{command} from {}",
+                    cwd.display()
+                );
+            }
+        }
     }
 
     #[rstest]

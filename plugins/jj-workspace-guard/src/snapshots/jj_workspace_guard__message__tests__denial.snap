@@ -9,9 +9,9 @@ jj-workspace-guard: default@ is read-only for agents, so this was blocked: `jj n
 To make changes, work in a jj workspace of your own (`jj workspace list` shows any already made for this task). Both commands are allowed from default@:
   mkdir -p /home/dev/repos/project/.claude/worktrees && jj workspace add /home/dev/repos/project/.claude/worktrees/<name>
   cd /home/dev/repos/project/.claude/worktrees/<name>
-The new workspace starts on the same parents as default@'s working copy (add `-r <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory you `cd` into, nothing is restricted there, and Edit and Write take absolute paths under it.
+The new workspace starts on the same parents as default@'s working copy (add `-r <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory you `cd` into, nothing is restricted there, and Edit and Write take absolute paths under it. To remove a workspace you made, run `jj workspace forget` inside it, then `rm -rf` its folder from anywhere.
 
-Allowed in default@ without a workspace: Read, Grep, Glob and other tools that do not edit files; Bash that only reads (ls, cat, rg, jq, find or fd without exec, sed as a filter, …); jj, git, gh and zellij commands that only read (log, status, diff, show, …), plus `jj workspace add` and mkdir; cp, mv, rm, rmdir, touch, unlink on files in Claude's memory or a temporary folder with no repo in it; pipes and redirects that write outside default@.
+Allowed in default@ without a workspace: Read, Grep, Glob and other tools that do not edit files; Bash that only reads (ls, cat, rg, jq, find or fd without exec, sed as a filter, …); jj, git, gh and zellij commands that only read (log, status, diff, show, …), plus `jj workspace add` and mkdir; cp, mv, rm, rmdir, touch, unlink on files in Claude's memory or a temporary folder with no repo in it, and rm on the folder of a workspace already forgotten; pipes and redirects that write outside default@.
 The full list is in /home/dev/.claude/plugins/cache/agent-plugins/jj-workspace-guard/1.0.0/ALLOWLIST.md.
 
 Do not work around this guard, for example through another interpreter, a different path to the same files, or another agent's workspace. If the task truly needs a change in default@ itself, stop and ask the user.

@@ -95,7 +95,7 @@ Outside any jj repo, it keeps project work out of unversioned folders: agents ma
 
 Repos that are not projects, such as a dotfiles source or a scratch repo, can opt out with `jj config set --repo jj-workspace-guard.enabled false`, run in that repo. Claude Code's memory directories (`~/.claude/projects/*/memory/`) are always writable.
 
-`rm`, `rmdir`, `unlink`, `mv`, `cp` and `touch` are allowed anywhere when everything they change is a disposable file: one in a Claude Code memory directory, or in a temporary folder with no jj or git repo in or under it. `cp` may copy from anywhere into such a place. So agents can delete or rename a memory, or clean up their own temporary files, without a workspace.
+`rm`, `rmdir`, `unlink`, `mv`, `cp` and `touch` are allowed anywhere when everything they change is a disposable file: one in a Claude Code memory directory, or in a temporary folder with no jj or git repo in or under it. `cp` may copy from anywhere into such a place. So agents can delete or rename a memory, or clean up their own temporary files, without a workspace. `rm` and `rmdir` (and `mv` of a source) may also remove the root folder of a workspace that its repo no longer lists: an agent finishing with a workspace runs `jj workspace forget` inside it, then removes the folder from anywhere. Registered workspaces, and paths inside any workspace, stay protected.
 
 ## How the jj plugins work together
 

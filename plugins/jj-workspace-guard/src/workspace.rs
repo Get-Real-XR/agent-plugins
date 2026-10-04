@@ -142,6 +142,40 @@ fn is_disposable_in(path: &Path, home: Option<&Path>) -> bool {
         && !may_hold_repo(&resolved)
 }
 
+/// Whether `path` is the root of an added jj workspace that its repo no
+/// longer lists, as after `jj workspace forget`. Nothing in the repo refers
+/// to such a folder any more, so removing it loses only the files in it.
+///
+/// Asks jj, loading the workspace without its working copy (which works for
+/// a forgotten one), for the roots of the workspaces its repo still has. Any
+/// doubt, such as a failed call or a listed workspace whose root jj does
+/// not know, counts as registered.
+pub fn is_forgotten_workspace(path: &Path) -> bool {
+    let Ok(root) = path.canonicalize() else {
+        return false;
+    };
+    if !(root.join(".jj").is_dir() && root.join(".jj/repo").is_file()) {
+        return false;
+    }
+    let Ok(output) = Command::new("jj")
+        .args(["--ignore-working-copy", "--color", "never", "-R"])
+        .arg(&root)
+        .args(["workspace", "list", "-T", r#"root ++ "\n""#])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let listed = String::from_utf8_lossy(&output.stdout);
+    let roots: Vec<&Path> = listed.lines().map(Path::new).collect();
+    roots.iter().all(|listed| listed.is_absolute())
+        && !roots.iter().any(|listed| {
+            *listed == root || listed.canonicalize().is_ok_and(|listed| listed == root)
+        })
+}
+
 /// Whether a jj or git repo may lie at or under `path`. Symlinks are not
 /// followed; past `SCAN_LIMIT` directories, the answer is yes.
 fn may_hold_repo(path: &Path) -> bool {

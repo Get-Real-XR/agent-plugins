@@ -9,6 +9,6 @@ jj-workspace-guard: default@ is read-only for agents.
 Reading is fine here. Before changing anything (editing files, jj or git commands that change state, builds), work in a jj workspace of your own (`jj workspace list` shows any already made for this task). Both commands are allowed from default@:
   mkdir -p /home/dev/repos/project/.claude/worktrees && jj workspace add /home/dev/repos/project/.claude/worktrees/<name>
   cd /home/dev/repos/project/.claude/worktrees/<name>
-The new workspace starts on the same parents as default@'s working copy (add `-r <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory you `cd` into, nothing is restricted there, and Edit and Write take absolute paths under it.
+The new workspace starts on the same parents as default@'s working copy (add `-r <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory you `cd` into, nothing is restricted there, and Edit and Write take absolute paths under it. To remove a workspace you made, run `jj workspace forget` inside it, then `rm -rf` its folder from anywhere.
 
 Edits and Bash commands that are not read-only are blocked in default@.

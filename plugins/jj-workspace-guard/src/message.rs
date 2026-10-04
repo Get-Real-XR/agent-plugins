@@ -100,8 +100,9 @@ impl fmt::Display for Denial {
                      that do not edit files; Bash that only reads (ls, cat, rg, jq, find or fd \
                      without exec, sed as a filter, …); jj, git, gh and zellij commands that \
                      only read (log, status, diff, show, …), plus `jj workspace add` and mkdir; \
-                     {} on files in Claude's memory or a temporary folder with no repo in it; \
-                     pipes and redirects that write outside default@.",
+                     {} on files in Claude's memory or a temporary folder with no repo in it, \
+                     and rm on the folder of a workspace already forgotten; pipes and \
+                     redirects that write outside default@.",
                     DISPOSABLE_WRITES.join(", ")
                 )?;
             }
@@ -181,7 +182,8 @@ fn how_to_leave(f: &mut fmt::Formatter<'_>, root: &Path) -> fmt::Result {
         "The new workspace starts on the same parents as default@'s working copy (add `-r \
          <revision>` to start elsewhere, such as `trunk()`). The Bash tool keeps the directory \
          you `cd` into, nothing is restricted there, and Edit and Write take absolute paths \
-         under it."
+         under it. To remove a workspace you made, run `jj workspace forget` inside it, then \
+         `rm -rf` its folder from anywhere."
     )
 }
 
@@ -254,6 +256,9 @@ pub fn allowlist() -> String {
              copy from anywhere)",
             DISPOSABLE_WRITES.join(" ")
         ),
+        "rm, rmdir, and mv as a source, on the root folder of a workspace its repo no longer \
+         lists, after `jj workspace forget`"
+            .to_owned(),
     ];
     let section = |out: &mut String, title: &str, items: &[String]| {
         let _ = writeln!(out, "\n## {title}\n");
