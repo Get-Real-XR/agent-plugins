@@ -29,6 +29,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/require-jj.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/push-check.sh",
+            "timeout": 300
           }
         ]
       }
@@ -63,6 +68,17 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stale-check.sh\" 'default@..@ ~ empty()'",
             "timeout": 300
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/prompt-note.sh",
+            "timeout": 10
           }
         ]
       }

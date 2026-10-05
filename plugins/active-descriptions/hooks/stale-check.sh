@@ -1,72 +1,47 @@
 #!/bin/bash
 
-# Stop/SubagentStop hook: block stopping while a change in the revset given as
-# $1 has a stale description.
+# Stop/SubagentStop hook: flag the changes an agent edited whose descriptions
+# are out of date, without blocking. The agent gets a note at the start of its
+# next turn (prompt-note.sh), the user sees one line now, and push-check.sh
+# refuses to push such changes.
 #
-# With jj-workspace-guard enabled, the default workspace is read-only for
-# agents: one working there cannot describe anything, and the changes there
-# are someone else's. Skip in that case instead of demanding the impossible.
+# Blocking at every turn's end made agents rewrite descriptions of work still
+# in progress, and stopped agents over other sessions' changes: a /fork in
+# its parent's workspace, or a shell that had drifted into another agent's.
 #
-# Check only this workspace's own changes: skip anything another workspace's
-# working copy is built on. Those changes belong to whoever works there (the
-# default workspace's stack, or another agent's stack this one branched from
-# or interleaves with), and rewriting them moves that workspace's checkout.
-#
-# Check the workspaces the agent edited files in (see mark-writer.sh), wherever
-# its shell happens to be: a shell that drifted into another agent's workspace
-# must neither answer for that agent's change nor skip its own workspace.
-# Sessions can share a workspace (a /fork starts in its parent's); one that
-# edited nothing is not held. A subagent answers for its own edits; the main
-# thread also answers for its subagents'.
-#
-# Block once per set of flagged changes. When the agent tries to stop again
-# without describing them (Claude Code sets stop_hook_active), it has
-# considered the request; blocking again would only loop.
+# $1 is the revset to check in each workspace the agent edited files in (see
+# mark-writer.sh), wherever its shell is now; an agent that edited nothing is
+# not flagged. A set of flagged changes is noted once, until it changes or
+# every change in it is described again.
 
 revset=$1
 
-source "$(dirname "$0")/guard-enabled.sh"
 source "$(dirname "$0")/session-state.sh"
-source "$(dirname "$0")/plugin-bin.sh"
+source "$(dirname "$0")/stale-report.sh"
 
-IFS=$'\x1f' read -r session agent hook_active < <(
-  jq -r '[.session_id // "", .agent_id // "main", (.stop_hook_active // false | tostring)] | join("\u001f")'
+IFS=$'\x1f' read -r session agent < <(
+  jq -r '[.session_id // "", .agent_id // "main"] | join("\u001f")'
 )
+[ -n "$session" ] || exit 0
+state=$(session_state "$session")
 
-if [ -n "$session" ]; then
-  state=$(session_state "$session")
-  roots=$(awk -F'\t' -v agent="$agent" '
-    (agent == "main" || $1 == agent) && !seen[$2]++ { print $2 }' "$state/writers" 2>/dev/null)
-else
-  roots=$(jj root 2>/dev/null)
+report=$(edited_roots "$state" "$agent" | stale_report "$revset")
+noted="$state/$agent.noted"
+if [ -z "$report" ]; then
+  rm -f "$noted"
+  exit 0
 fi
-[ -n "$roots" ] || exit 0
+flagged=$(flagged_changes "$report")
+[ "$flagged" = "$(cat "$noted" 2>/dev/null)" ] && exit 0
+printf '%s\n' "$flagged" >"$noted"
 
-bin=$(plugin_bin jj-stale-descriptions) || exit 0
-msg=""
-nl=$'\n'
-while IFS= read -r root; do
-  [ -d "$root/.jj" ] || continue
-  # Only the default workspace holds `.jj/repo` as a directory; added
-  # workspaces hold a file pointing to it.
-  if [ -d "$root/.jj/repo" ] && guard_enabled; then
-    continue
-  fi
-  found=$(cd "$root" && "$bin" "($revset) ~ ::(working_copies() ~ @)" 2>/dev/null) || continue
-  [ -n "$found" ] && msg="${msg:+$msg$nl}In the workspace at $root:$nl$found"
-done <<<"$roots"
-[ -n "$msg" ] || exit 0
+# The note is for the main thread's next turn; a subagent ends here, so its
+# note goes to the thread that outlives it.
+printf '%s\n' "$report" >>"$state/pending-note"
 
-if [ -n "$session" ]; then
-  flagged=$(grep -oE 'Stale description: change [k-z]+' <<<"$msg" | sort -u)
-  last_block="$state/$agent.last-block"
-  if [ "$hook_active" = true ] && [ "$flagged" = "$(cat "$last_block" 2>/dev/null)" ]; then
-    exit 0
-  fi
-  printf '%s\n' "$flagged" >"$last_block"
+if [ "$agent" = main ]; then
+  jq -nc --arg changes "$(paste -sd ' ' - <<<"$flagged")" '{systemMessage: (
+    "active-descriptions: changes edited this session have out-of-date descriptions (" + $changes +
+    "). The agent is reminded on its next turn, and jj git push refuses them until they are described.")}'
 fi
-
-echo "$msg" >&2
-echo "If a description still fits after a formatting-only or generated change, acknowledge it instead of rewording it, from that workspace: \"${CLAUDE_PLUGIN_ROOT}/hooks/ack.sh\" <change-id>" >&2
-echo "If a flagged change is another session's unfinished work, leave it alone and say so; you will not be stopped twice for the same changes." >&2
-exit 2
+exit 0

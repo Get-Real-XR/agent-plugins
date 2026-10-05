@@ -42,11 +42,17 @@ reflection on the work itself. Legitimate outcomes include:
 Treat description-writing as a moment to evaluate the work, not just
 record it.
 
-## Stale description trigger
+## Stale description triggers
 
-This plugin includes a Stop hook that blocks the session from ending when
-changes have diverged from their description. When the stop hook fires,
-treat each flagged change as a describe target:
+This plugin never stops you to describe. When a turn ends with changes you
+edited whose diff has moved on since they were described, you get a note at
+the start of your next turn. Describe them when the work reaches a stopping
+point, not mid-task. `jj git push` is refused while a change it would publish
+has an out-of-date description, so describe (or acknowledge) those before
+pushing. Leave alone any flagged change that is another session's unfinished
+work.
+
+Treat each change you describe as a describe target:
 
 1. Read the full current diff in a read-only tool call.
 2. After that call returns, enter the analysis and writing phases below.

@@ -33,7 +33,9 @@ Keeps your jj change descriptions in sync with your actual changes.
 | **Skill** | `/describe` (user-invocable) |
 | **Requires** | jj, Rust toolchain (cargo) |
 
-Blocks session exit until every in-flight change has an up-to-date description. It checks the workspaces the agent edited files in (with Edit, Write or NotebookEdit), wherever its shell has wandered since: a `/fork` or another session sharing a workspace can stop, an agent whose shell drifts into another agent's workspace is not asked about that agent's change, and a main session also answers for its subagents' edits. `plugins/active-descriptions/tests/stop-scope.sh` checks these cases. Each set of stale changes blocks once: an agent that tries to stop again without describing them is let go rather than looped. Edits made only through Bash do not count. When the agent detects drift, it runs `/describe` — reading the diff and conversation history, drafting a Conventional Commits description, and applying it via `jj describe`. Also gates Bash commands on being inside a jj repository, letting through commands that make or clone one; with jj-workspace-guard enabled it defers to the guard's finer rules.
+Flags out-of-date descriptions without stopping anyone, and refuses to push them. When a turn ends with changes the agent edited whose diff has moved on since they were described, the user sees one line and the agent gets a note at the start of its next turn, to describe them when the work reaches a stopping point. A set of flagged changes is noted once. `jj git push` is refused while a change it would publish has an out-of-date description; jj itself already refuses changes with none. An earlier version blocked the end of every turn instead, which had agents rewriting descriptions of work in progress and stopped them over other sessions' changes.
+
+Only workspaces the agent edited files in count (with Edit, Write or NotebookEdit; edits made only through Bash do not), wherever its shell has wandered since: a `/fork` or another session sharing a workspace is not flagged for changes it never touched, an agent whose shell drifts into another agent's workspace is not flagged for that agent's change, and a main session also answers for its subagents' edits. The push check needs no such record, so it also covers Codex (see below). `plugins/active-descriptions/tests/flags.sh` checks these cases. When the agent detects drift, it runs `/describe` — reading the diff and conversation history, drafting a Conventional Commits description, and applying it via `jj describe`. Also gates Bash commands on being inside a jj repository, letting through commands that make or clone one; with jj-workspace-guard enabled it defers to the guard's finer rules.
 
 Invoke `/describe` manually at any time to co-author a description mid-session.
 
@@ -118,18 +120,25 @@ Codex (0.159 and later) runs hooks with Claude Code's input and output format, s
       { "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-workspace-guard/hooks/codex-hook.sh\"" }] }
     ],
     "PreToolUse": [
-      { "matcher": "Bash|apply_patch", "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-workspace-guard/hooks/codex-hook.sh\"" }] }
+      { "matcher": "Bash|apply_patch", "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-workspace-guard/hooks/codex-hook.sh\"" }] },
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/active-descriptions/hooks/push-check.sh\"" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-worktree-compat/hooks/workspace-lifecycle.sh\" track" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "\"$HOME/.claude/plugins/marketplaces/agent-plugins/plugins/jj-worktree-compat/hooks/workspace-lifecycle.sh\" session-end" }] }
     ]
   }
 }
 ```
 
-Codex asks you to trust a hook before it first runs it.
+The same file can run active-descriptions' push check, which refuses a `jj git push` of changes with out-of-date descriptions, and jj-worktree-compat's workspace cleanup. Both rebuild or run from the same clone. Codex asks you to trust each hook once, in an interactive session, before it runs it; until then it skips it.
 
 ## How the jj plugins work together
 
-- **active-descriptions** enforces that every session ends with up-to-date descriptions, using **conventional-commits** for formatting. `/describe` ties them together.
-- **jj-worktree-compat** handles workspace lifecycle independently, so agent isolation works natively with jj.
+- **active-descriptions** flags out-of-date descriptions as agents work and refuses to push them, using **conventional-commits** for formatting. `/describe` ties them together.
+- **jj-worktree-compat** handles workspace lifecycle independently: isolation through jj workspaces, and removing idle ones when their session ends.
 - **jj-tutor** adapts to your level regardless of what else is installed — no coupling to the other plugins.
 
 ## Prerequisites
