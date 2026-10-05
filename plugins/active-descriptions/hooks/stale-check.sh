@@ -12,9 +12,12 @@
 # default workspace's stack, or another agent's stack this one branched from
 # or interleaves with), and rewriting them moves that workspace's checkout.
 #
-# Hold only an agent that edited files in this workspace (see mark-writer.sh).
-# Sessions can share a workspace: a /fork starts in its parent's. A subagent
-# answers for its own edits; the main thread also answers for its subagents'.
+# Check the workspaces the agent edited files in (see mark-writer.sh), wherever
+# its shell happens to be: a shell that drifted into another agent's workspace
+# must neither answer for that agent's change nor skip its own workspace.
+# Sessions can share a workspace (a /fork starts in its parent's); one that
+# edited nothing is not held. A subagent answers for its own edits; the main
+# thread also answers for its subagents'.
 #
 # Block once per set of flagged changes. When the agent tries to stop again
 # without describing them (Claude Code sets stop_hook_active), it has
@@ -30,24 +33,28 @@ IFS=$'\x1f' read -r session agent hook_active < <(
   jq -r '[.session_id // "", .agent_id // "main", (.stop_hook_active // false | tostring)] | join("\u001f")'
 )
 
-root=$(jj root 2>/dev/null) || exit 0
-# Only the default workspace holds `.jj/repo` as a directory; added
-# workspaces hold a file pointing to it.
-if [ -d "$root/.jj/repo" ] && guard_enabled; then
-  exit 0
-fi
-
 if [ -n "$session" ]; then
   state=$(session_state "$session")
-  awk -F'\t' -v agent="$agent" -v root="$root" '
-    $2 == root && (agent == "main" || $1 == agent) { found = 1 }
-    END { exit !found }' "$state/writers" 2>/dev/null || exit 0
+  roots=$(awk -F'\t' -v agent="$agent" '
+    (agent == "main" || $1 == agent) && !seen[$2]++ { print $2 }' "$state/writers" 2>/dev/null)
+else
+  roots=$(jj root 2>/dev/null)
 fi
-
-revset="($revset) ~ ::(working_copies() ~ @)"
+[ -n "$roots" ] || exit 0
 
 bin=$(plugin_bin jj-stale-descriptions) || exit 0
-msg=$("$bin" "$revset" 2>/dev/null) || exit 0
+msg=""
+nl=$'\n'
+while IFS= read -r root; do
+  [ -d "$root/.jj" ] || continue
+  # Only the default workspace holds `.jj/repo` as a directory; added
+  # workspaces hold a file pointing to it.
+  if [ -d "$root/.jj/repo" ] && guard_enabled; then
+    continue
+  fi
+  found=$(cd "$root" && "$bin" "($revset) ~ ::(working_copies() ~ @)" 2>/dev/null) || continue
+  [ -n "$found" ] && msg="${msg:+$msg$nl}In the workspace at $root:$nl$found"
+done <<<"$roots"
 [ -n "$msg" ] || exit 0
 
 if [ -n "$session" ]; then
@@ -60,6 +67,6 @@ if [ -n "$session" ]; then
 fi
 
 echo "$msg" >&2
-echo "If a description still fits after a formatting-only or generated change, acknowledge it instead of rewording it: \"${CLAUDE_PLUGIN_ROOT}/hooks/ack.sh\" <change-id>" >&2
-echo "If a flagged change is another session's unfinished work in this workspace, leave it alone and say so; you will not be stopped twice for the same changes." >&2
+echo "If a description still fits after a formatting-only or generated change, acknowledge it instead of rewording it, from that workspace: \"${CLAUDE_PLUGIN_ROOT}/hooks/ack.sh\" <change-id>" >&2
+echo "If a flagged change is another session's unfinished work, leave it alone and say so; you will not be stopped twice for the same changes." >&2
 exit 2
