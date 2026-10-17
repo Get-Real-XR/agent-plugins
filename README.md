@@ -70,7 +70,7 @@ Routes Claude Code worktree isolation through jj workspaces.
 | | |
 |---|---|
 | **Install** | `claude plugin install jj-worktree-compat@agent-plugins` |
-| **Requires** | jj |
+| **Requires** | jj; 0.46 or later for workspaces nested in colocated repos |
 
 Creates a jj workspace sharing the same parents as your current working copy; cleans up automatically on removal, after snapshotting it so no edit is lost. Drop-in replacement for Claude Code's built-in git worktrees. Like a git worktree made from `HEAD`, the new workspace does not contain your in-progress change; building it on top of that change instead would freeze the change for you wherever other workspaces' working copies are immutable (`working_copies()` in `immutable_heads()`). `plugins/jj-worktree-compat/tests/create-keeps-caller-mutable.sh` checks this.
 
@@ -86,7 +86,7 @@ bash ~/.claude/plugins/marketplaces/agent-plugins/plugins/jj-worktree-compat/hoo
 
 It lists each workspace as `recent` (a jj command changed it in the last day), `in use`, `has work` or `idle`, plus folders of workspaces jj has forgotten. `--apply` removes the idle ones, snapshotting each first; `--apply --forgotten` also deletes the forgotten folders, whose edits since they were forgotten are not recorded.
 
-Current Claude Code refuses a worktree that git resolves to an enclosing checkout. A jj workspace in a colocated repo, or anywhere under a git-managed home directory, has no `.git` of its own, so `EnterWorktree` and isolated subagents fail there until jj can give each workspace its own Git worktree. Create workspaces with `jj workspace add` and `cd` into them instead.
+Claude Code refuses a worktree that git resolves to an enclosing checkout. Since jj 0.46, a workspace added in a colocated repo is also a Git worktree with its own `.git`, so `EnterWorktree` and isolated subagents work wherever the workspaces live, and git, `gh` and Claude Code's git features work inside them. Removal then deletes the Git worktree too, using `jj workspace remove`. With older jj, a workspace nested in a colocated repo, or anywhere under a git-managed home directory, has no `.git` of its own, so Claude Code refuses it; put workspaces elsewhere with `JJ_WORKTREE_COMPAT_DIR`, or create them with `jj workspace add` and `cd` into them. `plugins/jj-worktree-compat/tests/remove.sh` checks removal.
 
 ### jj-workspace-guard
 

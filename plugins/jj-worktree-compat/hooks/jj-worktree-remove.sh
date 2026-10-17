@@ -13,27 +13,49 @@ name=$(basename "$worktree_path")
 # No global lock: jj serialises its own repo mutations internally and resolves
 # concurrent operations via op-log merge, so a remove is safe alongside other
 # concurrent creates/removes.
-#
-# Snapshot first: jj records a workspace's file edits only when a jj command
-# runs in it, so edits made since the agent's last jj command would otherwise
-# be deleted with the directory below.
+
+# Run jj from the caller's repo when there is one: that works even if the
+# workspace directory is already gone or its .jj link is broken. The caller may
+# also be inside the workspace being removed, which jj allows.
+repo_root=""
+if [ -n "$cwd" ]; then
+  repo_root=$(cd "$cwd" 2>/dev/null && jj root 2>/dev/null || true)
+fi
+if [ -z "$repo_root" ] && [ -d "$worktree_path/.jj" ]; then
+  repo_root=$worktree_path
+fi
+
+# jj 0.46 and later remove a workspace in one step: snapshot its edits, forget
+# it, delete its Git worktree when it is colocated, and delete its directory.
+if [ -n "$repo_root" ] && (cd "$repo_root" && jj workspace remove "$name" >/dev/null 2>&1); then
+  exit 0
+fi
+
+# Older jj, or a workspace whose directory is already gone. Snapshot first: jj
+# records a workspace's file edits only when a jj command runs in it, so edits
+# made since the agent's last jj command would otherwise be deleted with the
+# directory below.
 if [ -d "$worktree_path/.jj" ]; then
   (cd "$worktree_path" && jj status >/dev/null 2>&1) || true
 fi
 
 # Forget the workspace from jj's registry, then remove its directory. Prefer
-# forgetting by name from the repo root — that works even if the workspace
-# directory is already gone or its .jj link is broken — and fall back to a
-# self-forget from inside the workspace.
+# forgetting by name from the repo root, and fall back to a self-forget from
+# inside the workspace.
 forgotten=false
-if [ -n "$cwd" ]; then
-  repo_root=$(cd "$cwd" 2>/dev/null && jj root 2>/dev/null || true)
-  if [ -n "${repo_root:-}" ]; then
-    (cd "$repo_root" && jj workspace forget "$name" 2>/dev/null) && forgotten=true || true
-  fi
+if [ -n "$repo_root" ]; then
+  (cd "$repo_root" && jj workspace forget "$name" 2>/dev/null) && forgotten=true || true
 fi
 if [ "$forgotten" = false ] && [ -d "$worktree_path/.jj" ]; then
   (cd "$worktree_path" && jj workspace forget "$name" 2>/dev/null) || true
 fi
 
 rm -rf "$worktree_path"
+
+# jj 0.46's forget deletes a colocated workspace's Git worktree only while its
+# directory exists. When the directory was already gone, Git keeps a stale
+# entry for it. Pruning drops every unlocked entry in the repo whose directory
+# is missing, which `git gc` would otherwise do after three months.
+if [ -n "$repo_root" ]; then
+  git -C "$repo_root" worktree prune 2>/dev/null || true
+fi
