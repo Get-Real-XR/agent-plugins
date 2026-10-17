@@ -88,8 +88,6 @@ It lists each workspace as `recent` (a jj command changed it in the last day), `
 
 Current Claude Code refuses a worktree that git resolves to an enclosing checkout. A jj workspace in a colocated repo, or anywhere under a git-managed home directory, has no `.git` of its own, so `EnterWorktree` and isolated subagents fail there until jj can give each workspace its own Git worktree. Create workspaces with `jj workspace add` and `cd` into them instead.
 
-Versions before 0.3.0 installed these hooks into `~/.claude/settings.json` as a workaround for a Claude Code bug. The plugin now registers them itself; run `/jj-worktree-hook-workaround-remove` once to delete the old entries.
-
 ### jj-workspace-guard
 
 Makes the default jj workspace (`default@`) read-only for agents, so parallel agents never edit a working copy you or another agent is in the middle of.
